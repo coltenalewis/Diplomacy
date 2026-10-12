@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Global Command</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E%3Crect width=%2216%22 height=%2216%22 rx=%223%22 fill=%22%230a1220%22/%3E%3Ccircle cx=%228%22 cy=%228%22 r=%225.5%22 fill=%22none%22 stroke=%22%23e9c46a%22 stroke-width=%221.3%22/%3E%3Cpath d=%22M2.5 8H13.5M8 2.5C5.5 5 5.5 11 8 13.5M8 2.5C10.5 5 10.5 11 8 13.5%22 stroke=%22%23e9c46a%22 fill=%22none%22 stroke-width=%22.8%22/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400&family=Source+Code+Pro:wght@500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <script type="importmap">{ "imports": { "three": "./vendor/three.module.js", "three/addons/": "./vendor/jsm/" } }</script>
+</head>
+<body>
+<div id="app">
+  <header id="topbar">
+    <div class="brand"><span class="crest" id="crest"></span><div><div class="brand-name" id="brand-name">Global Command</div><div class="brand-sub" id="brand-sub">Strategic simulation</div></div></div>
+    <div class="clock"><div id="tb-date">--</div><div id="tb-time">--:--</div></div>
+    <div class="speed" id="speed">
+      <button data-s="0" title="Pause (Space)"><svg viewBox="0 0 12 12"><rect x="2" y="2" width="3" height="8" rx="1"/><rect x="7" y="2" width="3" height="8" rx="1"/></svg></button>
+      <button data-s="1" title="Normal (1)"><svg viewBox="0 0 12 12"><path d="M3 2L10 6L3 10Z"/></svg></button>
+      <button data-s="2" title="Fast (2)"><svg viewBox="0 0 16 12"><path d="M1 2L7 6L1 10ZM8 2L14 6L8 10Z"/></svg></button>
+      <button data-s="3" title="Faster (3)"><svg viewBox="0 0 20 12"><path d="M1 2L6 6L1 10ZM7 2L12 6L7 10ZM13 2L18 6L13 10Z"/></svg></button>
+      <button data-s="4" title="Fastest (4)"><svg viewBox="0 0 12 12"><path d="M7 1L2 7H6L5 11L10 5H6Z"/></svg></button>
+    </div>
+    <div class="res" id="res"></div>
+    <div class="tb-actions">
+      <button id="btn-war" class="btn go" title="War Department: recruit units in bulk (R)">Recruit</button>
+      <button id="btn-cabinet" class="btn go" title="Convene a cabinet meeting (C)">Cabinet</button>
+      <button id="btn-save" class="btn ghost">Save</button>
+      <button id="btn-load" class="btn ghost">Load</button>
+      <button id="btn-new" class="btn ghost">New</button>
+      <button id="btn-help" class="btn ghost">Manual</button>
+    </div>
+  </header>
+
+  <main id="stage">
+    <div id="globe"></div>
+    <div id="labels"></div>
+    <div id="markers"></div>
+    <div class="vignette"></div>
+    <div id="boxsel" class="boxsel hidden"></div>
+
+    <section id="standing" class="hud">
+      <div class="hud-title">World Standing <span id="st-goal"></span></div>
+      <div id="standing-body"></div>
+    </section>
+
+    <div id="readout" class="hud readout"><div id="ro-region">--</div><div id="ro-coords">--</div></div>
+
+    <div id="mapbar" class="hud mapbar">
+      <button data-m="political" class="on">Political</button>
+      <button data-m="realistic">Satellite</button>
+      <button data-m="clouds" class="on">Clouds</button>
+      <button data-m="routes" class="on">Trade</button>
+      <button data-m="labels" class="on">Labels</button>
+      <button data-m="home" title="Center on capital (H)">&#8962;</button>
+    </div>
+    <div id="selbar" class="hud selbar hidden"></div>
+    <div id="tooltip" class="tooltip hidden"></div>
+    <div id="toasts"></div>
+    <div id="paused" class="paused hidden">Paused</div>
+  </main>
+
+  <aside id="panel">
+    <nav class="tabs">
+      <button data-tab="region" class="active">Region</button>
+      <button data-tab="forces">Forces</button>
+      <button data-tab="command">Command</button>
+      <button data-tab="gov">Government</button>
+      <button data-tab="research">Research</button>
+      <button data-tab="economy">Economy</button>
+      <button data-tab="diplomacy">Diplomacy <b id="unread" class="badge hidden">0</b></button>
+      <button data-tab="intel">Intel</button>
+    </nav>
+    <div class="tab-body" id="tab-region"></div>
+    <div class="tab-body hidden" id="tab-forces"></div>
+    <div class="tab-body hidden" id="tab-command"></div>
+    <div class="tab-body hidden" id="tab-gov"></div>
+    <div class="tab-body hidden" id="tab-research"></div>
+    <div class="tab-body hidden" id="tab-economy"></div>
+    <div class="tab-body hidden" id="tab-diplomacy"></div>
+    <div class="tab-body hidden" id="tab-intel"></div>
+  </aside>
+
+  <footer id="ticker"><span class="tk-label">World News</span><div class="tk-track"><div id="tk-text"></div></div></footer>
+</div>
+
+<div id="modal" class="modal"><div class="modal-card" id="modal-card"><div class="boot">Establishing orbital link<span class="dots"></span></div></div></div>
+<div id="eventbox" class="modal hidden"><div class="event-card" id="event-card"></div></div>
+<div id="techtree" class="modal hidden"><div class="tree-card" id="tree-card"></div></div>
+<div id="cabinetbox" class="modal hidden"><div class="meet-card" id="meet-card"></div></div>
+<div id="warbox" class="modal hidden"><div class="meet-card war-card" id="war-card"></div></div>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

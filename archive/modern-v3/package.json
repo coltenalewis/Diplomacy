@@ -1,0 +1,14 @@
+{
+  "name": "global-command",
+  "version": "3.0.0",
+  "description": "Real-time grand strategy and government simulator on a 3D Earth. Served on localhost.",
+  "private": true,
+  "scripts": {
+    "start": "node server.js",
+    "sim": "node tools/live-sim.mjs 365",
+    "test:war": "node tools/war-test.mjs",
+    "test:air": "node tools/air-test.mjs",
+    "build-map": "node tools/build-map.js",
+    "test:cabinet": "node tools/cabinet-test.mjs"
+  }
+}

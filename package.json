@@ -1,0 +1,13 @@
+{
+  "name": "ages-of-command",
+  "version": "4.0.0",
+  "description": "Real-time grand strategy from the Stone Age to the Information Age on a 3D Earth. Served on localhost.",
+  "private": true,
+  "scripts": {
+    "start": "node server.js",
+    "sim": "node tools/era-sim.mjs 400 24",
+    "sim:long": "node tools/era-sim.mjs 1600 24",
+    "build-map": "node tools/build-map.js",
+    "build-tiles": "node tools/build-tiles.js"
+  }
+}
