@@ -37,3 +37,7 @@ node tools/era-sim.mjs [days] [civs]   # headless all-AI history for balancing
 ```
 
 `public/data/tilegeo.json` holds per-tile terrain statistics sampled from the NASA textures. The previous modern-day version of the game is preserved in `archive/modern-v3`, and the original turn-based Diplomacy is in `archive/turn-based`.
+
+## Credits
+
+8K Earth day and night textures by [Solar System Scope](https://www.solarsystemscope.com/textures/) (CC BY 4.0), based on NASA imagery. Map data from Natural Earth.
