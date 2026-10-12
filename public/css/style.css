@@ -84,23 +84,19 @@ button, input, select { font-family: inherit; color: inherit; font-size: inherit
 .lab.capital { color: #fff3d0; font-weight: 600; }
 .lab.capital::before { content: '\2605 '; color: var(--gold); }
 
-/* stack medallions */
-.tok { position: absolute; left: 0; top: 0; width: 30px; height: 30px; pointer-events: auto; cursor: pointer; will-change: transform; }
-.tok .disc { position: absolute; inset: 3px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--c) 85%, white 15%), color-mix(in srgb, var(--c) 55%, black 45%) 75%); box-shadow: 0 2px 6px rgba(0,0,0,.6), inset 0 -2px 4px rgba(0,0,0,.35), inset 0 1px 1px rgba(255,255,255,.35); display: grid; place-items: center; }
-.tok .disc svg { width: 15px; height: 15px; fill: #fff; filter: drop-shadow(0 1px 1px rgba(0,0,0,.6)); }
-.tok .ring { position: absolute; inset: 0; }
-.tok .ring circle { fill: none; stroke-width: 2.4; }
-.tok .ring .bg { stroke: rgba(0,0,0,.55); }
-.tok .ring .hp { stroke-linecap: round; transform: rotate(-90deg); transform-origin: 50% 50%; }
-.tok .n { position: absolute; right: -6px; bottom: -3px; min-width: 16px; height: 15px; padding: 0 4px; border-radius: 8px; background: #0b111b; border: 1px solid var(--c); color: #fff; font-size: 10.5px; font-weight: 700; line-height: 13px; text-align: center; }
-.tok .xp { position: absolute; left: -4px; top: -3px; color: var(--gold); font-size: 9px; text-shadow: 0 0 3px #000; letter-spacing: -1px; }
-.tok.sel .disc { box-shadow: 0 0 0 2px #fff, 0 0 14px rgba(255,255,255,.7); }
-.tok.fight .disc { animation: fightpulse .7s ease-in-out infinite; }
-.tok.small { width: 24px; height: 24px; }
-.tok.small .disc svg { width: 12px; height: 12px; }
-.tok.moving .dir { position: absolute; left: 50%; top: 50%; width: 0; height: 0; }
-.tok .dir i { position: absolute; left: -4px; top: -24px; width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; border-bottom: 7px solid var(--gold); filter: drop-shadow(0 0 3px #000); }
-@keyframes fightpulse { 50% { box-shadow: 0 0 0 3px rgba(255,93,93,.85), 0 0 16px rgba(255,80,60,.8); } }
+/* stack tags: slim and quiet, floating over the 3D models */
+.tok { position: absolute; left: 0; top: 0; display: flex; align-items: center; gap: 2px; height: 16px; padding: 0 4px 0 3px; border-radius: 4px; background: rgba(8, 12, 20, .62); border-left: 2px solid var(--c); pointer-events: auto; cursor: pointer; will-change: transform; opacity: .82; transition: opacity .15s; white-space: nowrap; }
+.tok:hover, .tok.sel { opacity: 1; }
+.tok .ic svg { display: block; width: 10px; height: 10px; fill: rgba(255,255,255,.9); }
+.tok .n { color: #fff; font-size: 10px; font-weight: 700; line-height: 1; }
+.tok .xp { color: var(--gold); font-size: 8px; letter-spacing: -1px; line-height: 1; }
+.tok .hp { position: absolute; left: 0; right: 0; bottom: -3px; height: 2px; background: rgba(0,0,0,.6); border-radius: 1px; overflow: hidden; }
+.tok .hp i { display: block; height: 100%; }
+.tok.small { opacity: .55; height: 14px; }
+.tok.small .ic svg { width: 9px; height: 9px; }
+.tok.sel { background: rgba(8, 12, 20, .85); box-shadow: 0 0 0 1px rgba(255,255,255,.7); }
+.tok.fight { animation: fightpulse .8s ease-in-out infinite; }
+@keyframes fightpulse { 50% { box-shadow: 0 0 0 1px rgba(255,93,93,.9), 0 0 10px rgba(255,80,60,.6); } }
 .cap { position: absolute; left: 0; top: 0; pointer-events: none; width: 40px; height: 4px; border-radius: 2px; background: rgba(0,0,0,.6); overflow: hidden; will-change: transform; }
 .cap i { display: block; height: 100%; background: var(--red); }
 
@@ -335,6 +331,7 @@ table.ut th { color: var(--muted); font-weight: 600; } table.ut td:first-child, 
 .qitem .st.building { color: var(--green); } .qitem .st.queued { color: var(--muted); } .qitem .st.funds { color: var(--red); }
 
 /* ---------------------------------------------------------------- ages of command */
+.season { margin-left: 6px; font-size: 11px; font-weight: 600; color: var(--muted); white-space: nowrap; }
 .agebadge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; letter-spacing: .4px; color: #0b1220; background: var(--ac, var(--gold)); }
 .agechip { font-style: normal; font-size: 9.5px; font-weight: 700; padding: 0 5px; border-radius: 6px; margin-left: 4px; color: #0b1220; background: var(--ac); vertical-align: 1px; }
 .pickbar { left: 50%; bottom: 20px; transform: translateX(-50%); width: min(820px, 92%); display: flex; gap: 14px; align-items: center; justify-content: space-between; padding: 12px 16px; border: 1px solid var(--gold-dim); }

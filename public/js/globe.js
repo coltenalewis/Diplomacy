@@ -12,6 +12,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ll2v, v2ll, slerpLL } from './world.js';
 import { RIVERS } from './resources.js';
+import { buildModels, MODEL_KEYS } from './unitmodels.js';
 
 // All shaders work in display (sRGB) space; colour management is off so hex colours stay as authored.
 THREE.ColorManagement.enabled = false;
@@ -38,7 +39,7 @@ void main() {
 }`;
 const EARTH_FS = `
 uniform sampler2D dayTex, nightTex, waterTex, topoTex, coastTex, cloudTex, idxTex, palTex, scarTex, priorTex;
-uniform vec3 sunDir; uniform float time; uniform float overlay; uniform float cloudShift; uniform float cloudAmt;
+uniform vec3 sunDir; uniform float time; uniform float overlay; uniform float cloudShift; uniform float cloudAmt; uniform float season;
 varying vec2 vUv; varying vec3 vN; varying vec3 vP;
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 // sine-free hash: stays well distributed for the large cell coordinates used by settlement lights
@@ -87,6 +88,28 @@ void main() {
   // day colour, relief light, cloud shadows
   vec3 day = texture2D(dayTex, vUv).rgb;
   day = mix(day, day * vec3(0.78, 0.92, 1.08), water * 0.45);
+  // seasons: the snowline sweeps toward the equator in winter (lower on high ground), forests turn in autumn,
+  // pack ice spreads over the polar seas. season = 0 on 1 January.
+  float lat = (vUv.y - 0.5) * 180.0, alat = abs(lat);
+  float winterN = cos(6.2831853 * (season - 0.97));
+  float wint = lat >= 0.0 ? winterN : -winterN; // -1 high summer .. 1 deep winter
+  float w01 = 0.5 + 0.5 * wint;
+  float elev = texture2D(topoTex, vUv).r;
+  float sn = vnoise(vUv * vec2(900.0, 450.0)) * 0.6 + vnoise(vUv * vec2(3600.0, 1800.0)) * 0.4;
+  float snowLine = mix(71.0, 42.0, w01 * w01) - elev * 48.0 * (0.4 + 0.6 * w01);
+  float snow = smoothstep(snowLine - 2.0, snowLine + 6.0, alat + (sn - 0.5) * 9.0) * (1.0 - smoothstep(0.3, 0.6, water));
+  float veg = smoothstep(0.0, 0.05, day.g - max(day.r, day.b) * 0.92) * (1.0 - water);
+  float phase = fract(season + (lat < 0.0 ? 0.5 : 0.0));
+  float autumn = exp(-pow((phase - 0.8) / 0.075, 2.0)) * smoothstep(28.0, 40.0, alat) * (1.0 - smoothstep(64.0, 72.0, alat));
+  float lum0 = dot(day, vec3(0.3, 0.59, 0.11));
+  day = mix(day, vec3(lum0 * 1.55, lum0 * 0.95, lum0 * 0.35) + vec3(0.03, 0.0, 0.0) * sn, veg * autumn * 0.75);
+  float dormant = max(0.0, wint) * smoothstep(25.0, 45.0, alat) * (1.0 - snow);
+  day = mix(day, vec3(lum0 * 1.05, lum0 * 0.98, lum0 * 0.82), veg * dormant * 0.45);
+  day = mix(day, day * vec3(0.92, 1.08, 0.9), veg * max(0.0, -wint) * smoothstep(25.0, 45.0, alat) * 0.5);
+  day = mix(day, vec3(0.9, 0.93, 0.98) * (0.86 + 0.14 * sn), snow * 0.92);
+  float iceLine = mix(80.0, (lat >= 0.0 ? 63.0 : 59.0), w01 * w01);
+  float ice = smoothstep(iceLine - 1.5, iceLine + 2.5, alat + (sn - 0.5) * 5.0) * smoothstep(0.3, 0.6, water);
+  day = mix(day, vec3(0.82, 0.88, 0.95) * (0.9 + 0.1 * sn), ice * 0.9);
   float relief = 0.55 + 0.75 * max(ndlR, 0.0) / max(0.25, max(ndl, 0.0) + 0.25);
   vec3 dayCol = day * (0.12 + 0.8 * pow(max(ndl, 0.0), 0.7)) * mix(1.0, relief, 0.75 * (1.0 - water));
   dayCol = dayCol / (1.0 + dayCol * 0.35); // soft tone-map
@@ -125,7 +148,7 @@ void main() {
   vec3 v = normalize(cameraPosition - vP);
   vec3 h = normalize(sunDir + v);
   float cv = texture2D(coastTex, vUv).r;
-  float sea = smoothstep(0.004, 0.03, cv);
+  float sea = smoothstep(0.004, 0.03, cv) * (1.0 - ice);
   if (sea > 0.0) {
     float cd = clamp((cv * 255.0 - 8.0) / 247.0, 0.0, 1.0); // 0 at the shore, 1 well offshore
     vec2 wq = vUv * vec2(2048.0, 1024.0);
@@ -145,7 +168,8 @@ void main() {
     // sun glint off a rippling surface
     vec2 gq = wq * 3.5;
     float g0 = swell(gq, time), gx = swell(gq + vec2(0.4, 0.0), time) - g0, gy = swell(gq + vec2(0.0, 0.4), time) - g0;
-    float ripple = 1.0 - smoothstep(0.4, 1.5, fwidth(gq.x));
+    // sparkle only while ripple cells are a few pixels across: too fine aliases, too coarse shows the noise grid
+    float ripple = (1.0 - smoothstep(0.4, 1.5, fwidth(gq.x))) * smoothstep(0.03, 0.12, fwidth(gq.x));
     vec3 nw = normalize(n - (east * gx + north * gy) * 0.12 * ripple);
     float spec = pow(max(dot(nw, h), 0.0), 400.0) * 0.55 * ripple + pow(max(dot(n, h), 0.0), 90.0) * 0.12;
     col += vec3(1.0, 0.93, 0.8) * spec * sea * dayMix * (1.0 - shadow * 0.7 * cloudAmt);
@@ -208,6 +232,40 @@ void main(){ vec2 p = vUv - 0.5; float r = length(p) * 2.0; float k = age / life
   float ring = smoothstep(0.08, 0.0, abs(r - k)) * (1.0 - k);
   float core = smoothstep(0.5 * (1.0 - k), 0.0, r) * (1.0 - k) * 1.4;
   float a = ring + core; gl_FragColor = vec4(color * (1.0 + core), a); }`;
+// 3D unit models: team colour, metal, cloth, waving flags, base plate and wood, lit by the sun with sky fill so
+// they stay readable at night.
+const UNIT_VS = `
+attribute float part; uniform float time;
+varying vec3 vCol; varying vec3 vNw; varying vec3 vPw;
+void main() {
+  vec3 p = position;
+  vec3 seed = instanceMatrix[3].xyz;
+  if (part > 2.5 && part < 3.5) p.x += sin(time * 7.0 + p.z * 16.0 + p.y * 5.0 + dot(seed, vec3(97.0, 61.0, 43.0))) * 0.035;
+  mat4 m = modelMatrix * instanceMatrix;
+  vec4 wp = m * vec4(p, 1.0);
+  vNw = normalize(mat3(m) * normal); vPw = wp.xyz;
+  vec3 c = instanceColor;
+  if (part > 0.5 && part < 1.5) c = vec3(0.2, 0.21, 0.23);
+  else if (part > 1.5 && part < 2.5) c = vec3(0.86, 0.82, 0.74);
+  else if (part > 3.5 && part < 4.5) c = instanceColor * 0.42;
+  else if (part > 4.5) c = vec3(0.42, 0.29, 0.17);
+  vCol = c;
+  gl_Position = projectionMatrix * viewMatrix * wp;
+}`;
+const UNIT_FS = `
+uniform vec3 sunDir; varying vec3 vCol; varying vec3 vNw; varying vec3 vPw;
+void main() {
+  vec3 n = normalize(vNw), up = normalize(vPw);
+  float day = smoothstep(-0.15, 0.25, dot(up, sunDir));
+  float l = max(dot(n, sunDir), 0.0);
+  vec3 v = normalize(cameraPosition - vPw);
+  float rim = pow(1.0 - max(dot(n, v), 0.0), 3.0);
+  float amb = 0.4 + 0.22 * max(dot(n, up), 0.0);
+  vec3 c = vCol * (amb + 0.85 * l * day) + (vCol * 0.35 + 0.08) * rim;
+  gl_FragColor = vec4(c, 1.0);
+}`;
+const RING_VS = `varying vec3 vC; void main(){ vC = instanceColor; gl_Position = projectionMatrix * viewMatrix * modelMatrix * instanceMatrix * vec4(position, 1.0); }`;
+const RING_FS = `varying vec3 vC; void main(){ gl_FragColor = vec4(vC, 1.0); }`;
 const FX_VS = `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`;
 
 export class Globe {
@@ -250,6 +308,11 @@ export class Globe {
     const u = this.earth.material.uniforms;
     u.dayTex.value = day; u.nightTex.value = night; u.waterTex.value = water; u.topoTex.value = topo;
     this._nightImg = night.image; this._waterImg = water.image;
+    try {
+      const ti = topo.image, c = document.createElement('canvas'); c.width = ti.width; c.height = ti.height;
+      const x = c.getContext('2d', { willReadFrequently: true }); x.drawImage(ti, 0, 0);
+      this._topo = { w: c.width, h: c.height, d: x.getImageData(0, 0, c.width, c.height).data };
+    } catch (e) { console.warn('height map', e); }
     try { u.priorTex.value = this.buildPrior(night.image, water.image); } catch (e) { console.warn('settlement map', e); }
     try { u.coastTex.value = this.buildCoast(water.image, big ? 4096 : 2048); } catch (e) { console.warn('coast map', e); }
     this.sky.material.map = sky; this.sky.material.needsUpdate = true;
@@ -347,12 +410,12 @@ export class Globe {
     const blank = new THREE.DataTexture(new Uint8Array([0, 0, 0, 0]), 1, 1); blank.needsUpdate = true;
 
     const sunDir = { value: new THREE.Vector3(1, 0, 0) };
-    const cloudShift = { value: 0 }, cloudAmt = { value: 0.5 };
-    this.u = { sunDir, cloudShift, cloudAmt };
+    const cloudShift = { value: 0 }, cloudAmt = { value: 0.5 }, season = { value: 0.22 };
+    this.u = { sunDir, cloudShift, cloudAmt, season };
     const mat = new THREE.ShaderMaterial({
       vertexShader: TERRAIN_VS, fragmentShader: EARTH_FS,
       uniforms: { relief: { value: 0.0065 }, dayTex: { value: blank }, nightTex: { value: blank }, waterTex: { value: blank }, topoTex: { value: blank }, coastTex: { value: blank }, cloudTex: { value: blank }, priorTex: { value: blank },
-        idxTex: { value: idxTex }, idxSize: { value: new THREE.Vector2(idxTex.image.width, idxTex.image.height) }, palTex: { value: palTex }, scarTex: { value: this.scarTex }, sunDir, cloudShift, cloudAmt, time: { value: 0 }, overlay: { value: 1 } },
+        idxTex: { value: idxTex }, idxSize: { value: new THREE.Vector2(idxTex.image.width, idxTex.image.height) }, palTex: { value: palTex }, scarTex: { value: this.scarTex }, sunDir, cloudShift, cloudAmt, season, time: { value: 0 }, overlay: { value: 1 } },
     });
     this.earth = new THREE.Mesh(new THREE.SphereGeometry(1, 720, 360), mat);
     scene.add(this.earth);
@@ -564,6 +627,7 @@ export class Globe {
     const d = new Date(startMs + hours * 3600e3);
     const doy = (d - Date.UTC(d.getUTCFullYear(), 0, 0)) / 864e5;
     const decl = 23.44 * Math.sin(2 * Math.PI * (doy - 81) / 365);
+    this.u.season.value = ((doy - 1) / 365) % 1;
     const utc = (((startMs / 3600e3 + hours) % 24) + 24) % 24;
     if (!this.alwaysDay) this.u.sunDir.value.set(...ll2v(decl, (12 - utc) * 15)).normalize();
     this.u.cloudShift.value = (hours * 0.00035) % 1;
@@ -697,40 +761,23 @@ export class Globe {
 
   // ---------------------------------------------------------------- unit dots (GPU points), trails, range rings
   initUnits(max = 8000) {
-    const geo = new THREE.BufferGeometry();
-    this.uPos = new Float32Array(max * 3); this.uCol = new Float32Array(max * 3); this.uSize = new Float32Array(max); this.uFlag = new Float32Array(max);
-    geo.setAttribute('position', new THREE.BufferAttribute(this.uPos, 3).setUsage(THREE.DynamicDrawUsage));
-    geo.setAttribute('color', new THREE.BufferAttribute(this.uCol, 3).setUsage(THREE.DynamicDrawUsage));
-    geo.setAttribute('size', new THREE.BufferAttribute(this.uSize, 1).setUsage(THREE.DynamicDrawUsage));
-    geo.setAttribute('flag', new THREE.BufferAttribute(this.uFlag, 1).setUsage(THREE.DynamicDrawUsage));
-    geo.setDrawRange(0, 0);
-    const mat = new THREE.ShaderMaterial({
-      transparent: true, depthWrite: false,
-      uniforms: { time: { value: 0 }, scale: { value: 1 } },
-      vertexShader: `attribute vec3 color; attribute float size; attribute float flag; varying vec3 vC; varying float vF; varying float vFace;
-        uniform float scale;
-        void main(){ vC = color; vF = flag; vec4 mv = modelViewMatrix * vec4(position, 1.0);
-          vec3 n = normalize(position); vec3 toCam = normalize(cameraPosition - position); vFace = dot(n, toCam);
-          gl_PointSize = clamp(size * scale / -mv.z, 2.0, size * 1.6); gl_Position = projectionMatrix * mv; }`,
-      fragmentShader: `varying vec3 vC; varying float vF; varying float vFace; uniform float time;
-        void main(){ if (vFace < 0.05) discard;
-          vec2 p = gl_PointCoord * 2.0 - 1.0; float r = length(p); if (r > 1.0) discard;
-          float sel = mod(vF, 2.0); float mine = mod(floor(vF / 2.0), 2.0); float air = mod(floor(vF / 4.0), 2.0); float sea = mod(floor(vF / 8.0), 2.0); float fight = mod(floor(vF / 16.0), 2.0);
-          float core = smoothstep(0.62, 0.5, r);
-          float rim = smoothstep(0.78, 0.68, r) - core;
-          vec3 col = vC * (0.75 + 0.5 * (1.0 - r));
-          if (sea > 0.5) { core = smoothstep(0.62, 0.5, r) * (1.0 - smoothstep(0.3, 0.22, r) * 0.65); }
-          float a = core + rim * 0.9;
-          vec3 c = mix(vec3(0.02, 0.03, 0.05), col, core / max(a, 0.001));
-          float halo = smoothstep(1.0, 0.7, r) * (1.0 - smoothstep(0.75, 0.62, r));
-          if (sel > 0.5) { c = mix(c, vec3(1.0), halo); a = max(a, halo); }
-          else if (fight > 0.5) { float pul = 0.5 + 0.5 * sin(time * 9.0); c = mix(c, vec3(1.0, 0.25, 0.15), halo * pul); a = max(a, halo * pul); }
-          else if (mine > 0.5) { a = max(a, halo * 0.35); c = mix(c, col, halo * 0.35); }
-          if (air > 0.5) c += vec3(0.25);
-          gl_FragColor = vec4(c, a); }`,
-    });
-    this.unitPts = new THREE.Points(geo, mat); this.unitPts.renderOrder = 8; this.unitPts.frustumCulled = false;
-    this.scene.add(this.unitPts);
+    this.maxUnits = max;
+    const geos = buildModels();
+    const mat = new THREE.ShaderMaterial({ uniforms: { sunDir: this.u.sunDir, time: { value: 0 } }, vertexShader: UNIT_VS, fragmentShader: UNIT_FS });
+    this.unitMat = mat;
+    const inst = (geo, material) => {
+      const m = new THREE.InstancedMesh(geo, material, max);
+      m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      m.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(max * 3), 3).setUsage(THREE.DynamicDrawUsage);
+      m.count = 0; m.frustumCulled = false;
+      this.scene.add(m); return m;
+    };
+    this.models = {};
+    for (const k of MODEL_KEYS) { this.models[k] = inst(geos[k], mat); this.models[k].renderOrder = 8; }
+    // selection and battle rings on the ground
+    this.unitRings = inst(new THREE.RingGeometry(0.66, 0.8, 32).rotateX(-Math.PI / 2), new THREE.ShaderMaterial({ vertexShader: RING_VS, fragmentShader: RING_FS, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+    this.unitRings.renderOrder = 7;
+    this.unitState = new Map(); this.ghosts = []; this._uFrame = 0;
     // trails (aircraft & ships)
     const tg = new THREE.BufferGeometry();
     this.trPos = new Float32Array(max * 6 * 3); this.trCol = new Float32Array(max * 6 * 3);
@@ -742,18 +789,144 @@ export class Globe {
     this.scene.add(this.trails);
     this.ringGroup = new THREE.Group(); this.scene.add(this.ringGroup);
   }
-  // units: [{lat, lon, alt, color:[r,g,b], size, flag}]
+  // ground height under a point (the same lift the terrain shader applies)
+  heightAt(lat, lon) {
+    const T = this._topo; if (!T) return 0;
+    const x = Math.min(T.w - 1, Math.max(0, Math.floor((((lon + 180) % 360 + 360) % 360) / 360 * T.w))), y = Math.min(T.h - 1, Math.max(0, Math.floor((90 - lat) / 180 * T.h)));
+    return Math.pow(T.d[(y * T.w + x) * 4] / 255, 0.85) * this.earth.material.uniforms.relief.value;
+  }
+  // units: [{id, lat, lon, alt, color:[r,g,b], size, flag, model, moving, form:[k, n], slot}]
+  // flag bits: 1 selected, 2 mine, 4 airborne, 8 at sea, 16 fighting.
+  // Each unit keeps a smoothed heading from its motion and is animated: marching bob, galloping, ships riding the
+  // swell, aircraft banking into turns, recoil in battle, a pop when raised and a topple when destroyed.
   setUnits(list) {
-    const n = Math.min(list.length, this.uSize.length);
-    for (let k = 0; k < n; k++) {
-      const u = list[k]; const v = ll2v(u.lat, u.lon, 1.003 + (u.alt || 0));
-      this.uPos[k * 3] = v[0]; this.uPos[k * 3 + 1] = v[1]; this.uPos[k * 3 + 2] = v[2];
-      this.uCol[k * 3] = u.color[0]; this.uCol[k * 3 + 1] = u.color[1]; this.uCol[k * 3 + 2] = u.color[2];
-      this.uSize[k] = u.size; this.uFlag[k] = u.flag;
+    const t = this.clock.elapsedTime, now = performance.now();
+    const dt = Math.min(0.1, Math.max(0.001, (now - (this._uT || now)) / 1000)); this._uT = now;
+    const frame = ++this._uFrame;
+    const cam = this.camera.position, cx = cam.x, cy = cam.y, cz = cam.z;
+    const pxK = 2 * Math.tan(this.camera.fov * Math.PI / 360) / Math.max(1, this.container.clientHeight);
+    const camD = cam.length(), close = 1 + 0.5 * Math.min(1, Math.max(0, (1.6 - camD) / 0.5));
+    const cr = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 0); // screen right
+    const counts = {}; for (const k of MODEL_KEYS) counts[k] = 0;
+    let nr = 0;
+    const rings = this.unitRings, RM = rings.instanceMatrix.array, RC = rings.instanceColor.array;
+    const write = (model, R, U, F, px, py, pz, sc, col) => {
+      const m = this.models[model], i = counts[model]++; if (i >= this.maxUnits) return;
+      const e = m.instanceMatrix.array, o = i * 16;
+      e[o] = R[0] * sc; e[o + 1] = R[1] * sc; e[o + 2] = R[2] * sc; e[o + 3] = 0;
+      e[o + 4] = U[0] * sc; e[o + 5] = U[1] * sc; e[o + 6] = U[2] * sc; e[o + 7] = 0;
+      e[o + 8] = F[0] * sc; e[o + 9] = F[1] * sc; e[o + 10] = F[2] * sc; e[o + 11] = 0;
+      e[o + 12] = px; e[o + 13] = py; e[o + 14] = pz; e[o + 15] = 1;
+      m.instanceColor.array.set(col, i * 3);
+    };
+    const R = [0, 0, 0], U = [0, 0, 0], F = [0, 0, 0];
+    // orient: up, heading, then roll about the heading and pitch about the right axis
+    const basis = (up, h, roll, pitch) => {
+      let ex = up[2], ez = -up[0]; const el = Math.hypot(ex, ez) || 1; ex /= el; ez /= el; // east: (z, 0, -x), the way longitude rises
+      const nx = up[1] * ez, ny = up[2] * ex - up[0] * ez, nz = -up[1] * ex; // north = up x east
+      const ch = Math.cos(h), sh = Math.sin(h);
+      const f0 = nx * ch + ex * sh, f1 = ny * ch, f2 = nz * ch + ez * sh;
+      const r0 = up[1] * f2 - up[2] * f1, r1 = up[2] * f0 - up[0] * f2, r2 = up[0] * f1 - up[1] * f0; // right = up x fwd
+      const cr = Math.cos(roll), sr = Math.sin(roll), cp = Math.cos(pitch), sp = Math.sin(pitch);
+      const u1 = [up[0] * cr + r0 * sr, up[1] * cr + r1 * sr, up[2] * cr + r2 * sr];
+      R[0] = r0 * cr - up[0] * sr; R[1] = r1 * cr - up[1] * sr; R[2] = r2 * cr - up[2] * sr;
+      F[0] = f0 * cp + u1[0] * sp; F[1] = f1 * cp + u1[1] * sp; F[2] = f2 * cp + u1[2] * sp;
+      U[0] = u1[0] * cp - f0 * sp; U[1] = u1[1] * cp - f1 * sp; U[2] = u1[2] * cp - f2 * sp;
+      return [ex, ez];
+    };
+    const FORM = [[[0, 0]], [[-0.55, 0], [0.55, 0]], [[0, 0.5], [-0.6, -0.42], [0.6, -0.42]], [[-0.55, 0.5], [0.55, 0.5], [-0.55, -0.55], [0.55, -0.55]], [[0, 0.75], [-0.68, 0.15], [0.68, 0.15], [-0.42, -0.65], [0.42, -0.65]]];
+    for (const u of list) {
+      let st = this.unitState.get(u.id);
+      if (!st) { st = { h: (u.id * 2.399) % (Math.PI * 2), born: t, bank: 0, ph: (u.id * 1.618) % 6.283, lp: null, last: new Float32Array(16) }; this.unitState.set(u.id, st); }
+      st.seen = frame; st.model = u.model;
+      const air = u.flag & 4, sea = u.flag & 8, fight = u.flag & 16, sel = u.flag & 1;
+      const up = ll2v(u.lat, u.lon, 1);
+      // heading follows the direction of travel
+      let turn = 0;
+      if (st.lp) {
+        const dx = up[0] - st.lp[0], dy = up[1] - st.lp[1], dz = up[2] - st.lp[2];
+        let ex = up[2], ez = -up[0]; const el = Math.hypot(ex, ez) || 1; ex /= el; ez /= el;
+        const de = dx * ex + dz * ez, dn = dx * (up[1] * ez) + dy * (up[2] * ex - up[0] * ez) + dz * (-up[1] * ex);
+        if (de * de + dn * dn > 1e-13) {
+          let d = Math.atan2(de, dn) - st.h; d = Math.atan2(Math.sin(d), Math.cos(d));
+          turn = d * Math.min(1, dt * (air ? 3 : 5)); st.h += turn;
+        }
+      }
+      st.lp = up;
+      st.bank += ((air ? Math.max(-0.7, Math.min(0.7, -turn / dt * 0.35)) : 0) - st.bank) * Math.min(1, dt * 4);
+      const k = u.form ? u.form[0] : 0, n = u.form ? Math.min(5, u.form[1]) : 1;
+      if (k >= 5) continue; // big stacks show five; the tag carries the count
+      const r = air ? 1.003 + (u.alt || 0) : sea ? 1.0002 : 1.0002 + this.heightAt(u.lat, u.lon);
+      const px0 = up[0] * r, py0 = up[1] * r, pz0 = up[2] * r;
+      if (up[0] * cx + up[1] * cy + up[2] * cz < r * 0.995) continue; // behind the horizon
+      const D = Math.hypot(cx - px0, cy - py0, cz - pz0);
+      const ws = Math.min(0.014, u.size * 2.4 * close * D * pxK);
+      // animation
+      const ph = st.ph, model = u.model;
+      let bob = 0, roll = 0, pitch = 0, fo = 0, sc = 1;
+      if (air) { bob = Math.sin(t * 2.2 + ph) * 0.15; roll = st.bank; pitch = Math.sin(t * 1.7 + ph) * 0.05; }
+      else if (sea) { roll = Math.sin(t * 1.5 + ph) * 0.09; pitch = Math.sin(t * 1.05 + ph * 1.7) * (u.moving ? 0.07 : 0.04); bob = Math.sin(t * 1.3 + ph) * 0.05 - (model === 'sub' ? 0.06 : 0); }
+      else if (u.moving) {
+        if (model === 'arm' || model === 'aa' || model === 'art' || model === 'cat') { bob = Math.abs(Math.sin(t * 26 + ph)) * 0.015; pitch = Math.sin(t * 2.6 + ph) * 0.03; }
+        else { const cav = model === 'cav', w = Math.sin(t * (cav ? 11 : 8.5) + ph); bob = Math.abs(w) * (cav ? 0.14 : 0.09); pitch = w * (cav ? 0.1 : 0.05); }
+      } else roll = Math.sin(t * 1.2 + ph) * 0.015;
+      if (fight) { const kk = Math.pow(Math.max(0, Math.sin(t * 12 + ph)), 6); fo -= kk * 0.18; pitch -= kk * 0.12; roll += Math.sin(t * 23 + ph) * 0.03; }
+      const age = (t - st.born) / 0.5;
+      if (age < 1) { const c1 = 1.70158, a = age - 1; sc = 1 + (c1 + 1) * a * a * a + c1 * a * a; } // ease-out-back pop
+      const [ex, ez] = basis(up, st.h, roll, pitch);
+      // seen from straight above a figure is just the top of its head: lean it back toward the screen's top so the
+      // camera sees it in three-quarter view, the more so the more top-down the view
+      const vx = cx - px0, vy = cy - py0, vz = cz - pz0, top = (up[0] * vx + up[1] * vy + up[2] * vz) / D;
+      const lean = -0.85 * Math.min(1, Math.max(0, (top - 0.35) / 0.5));
+      if (lean) {
+        const d = cr.x * up[0] + cr.y * up[1] + cr.z * up[2];
+        let ax = cr.x - up[0] * d, ay = cr.y - up[1] * d, az = cr.z - up[2] * d; const al = Math.hypot(ax, ay, az) || 1; ax /= al; ay /= al; az /= al;
+        const c = Math.cos(lean), s = Math.sin(lean);
+        for (const V of [R, U, F]) { // Rodrigues about the in-plane screen-right axis
+          const kd = ax * V[0] + ay * V[1] + az * V[2], x0 = ay * V[2] - az * V[1], y0 = az * V[0] - ax * V[2], z0 = ax * V[1] - ay * V[0];
+          V[0] = V[0] * c + x0 * s + ax * kd * (1 - c); V[1] = V[1] * c + y0 * s + ay * kd * (1 - c); V[2] = V[2] * c + z0 * s + az * kd * (1 - c);
+        }
+      }
+      const [ox, oz] = FORM[n - 1][k];
+      // formation offsets in the unit's own frame, detachments side by side along the east
+      const fx = ox * ws * 1.15, fz = oz * ws * 1.15, sl = (u.slot || 0) * ws * 1.8;
+      const r0 = R[0], r1 = R[1], r2 = R[2];
+      const px = px0 + r0 * fx + F[0] * (fz + fo * ws) + U[0] * bob * ws + ex * sl;
+      const py = py0 + r1 * fx + F[1] * (fz + fo * ws) + U[1] * bob * ws;
+      const pz = pz0 + r2 * fx + F[2] * (fz + fo * ws) + U[2] * bob * ws + ez * sl;
+      write(model, R, U, F, px, py, pz, ws * sc, u.color);
+      const L = st.last; L.set(R, 0); L.set(U, 3); L.set(F, 6); L[9] = px; L[10] = py; L[11] = pz; L[12] = ws; L[13] = u.color[0]; L[14] = u.color[1]; L[15] = u.color[2];
+      // rings: white for the selection, pulsing red in battle
+      if ((sel || fight) && nr < this.maxUnits) {
+        basis(up, st.h, 0, 0);
+        const q = ws * (air ? 0.9 : 1.05), o = nr * 16;
+        RM[o] = R[0] * q; RM[o + 1] = R[1] * q; RM[o + 2] = R[2] * q; RM[o + 3] = 0;
+        RM[o + 4] = U[0] * q; RM[o + 5] = U[1] * q; RM[o + 6] = U[2] * q; RM[o + 7] = 0;
+        RM[o + 8] = F[0] * q; RM[o + 9] = F[1] * q; RM[o + 10] = F[2] * q; RM[o + 11] = 0;
+        RM[o + 12] = px - up[0] * bob * ws * 0.9; RM[o + 13] = py - up[1] * bob * ws * 0.9; RM[o + 14] = pz - up[2] * bob * ws * 0.9; RM[o + 15] = 1;
+        const pul = 0.5 + 0.5 * Math.sin(t * (fight && !sel ? 9 : 3));
+        if (sel) { RC[nr * 3] = RC[nr * 3 + 1] = 0.7 + 0.3 * pul; RC[nr * 3 + 2] = 0.62 + 0.3 * pul; } else { RC[nr * 3] = 0.9 * pul; RC[nr * 3 + 1] = 0.18 * pul; RC[nr * 3 + 2] = 0.1 * pul; }
+        nr++;
+      }
     }
-    const g = this.unitPts.geometry;
-    g.setDrawRange(0, n);
-    for (const a of ['position', 'color', 'size', 'flag']) g.attributes[a].needsUpdate = true;
+    // the fallen topple and sink away
+    const gone = [];
+    for (const [id, st] of this.unitState) if (st.seen !== frame) { gone.push(st); this.unitState.delete(id); }
+    if (gone.length && gone.length < 40) for (const st of gone) if (st.last[12] > 0) this.ghosts.push({ t0: t, model: st.model, L: st.last });
+    this.ghosts = this.ghosts.filter(g => t - g.t0 < 0.9);
+    for (const g of this.ghosts) {
+      const a = (t - g.t0) / 0.9, L = g.L, ws = L[12], tip = a * 1.3, c = Math.cos(tip), s = Math.sin(tip);
+      for (let j = 0; j < 3; j++) { R[j] = L[j] * c - L[3 + j] * s; U[j] = L[3 + j] * c + L[j] * s; F[j] = L[6 + j]; }
+      const sink = a * a * 0.6 * ws, fade = 1 - a * 0.6;
+      const up = [L[9], L[10], L[11]], ul = Math.hypot(...up);
+      write(g.model, R, U, F, L[9] - up[0] / ul * sink, L[10] - up[1] / ul * sink, L[11] - up[2] / ul * sink, ws * (1 - a * a * 0.5), [L[13] * fade, L[14] * fade, L[15] * fade]);
+    }
+    for (const k of MODEL_KEYS) {
+      const m = this.models[k]; m.count = Math.min(this.maxUnits, counts[k]);
+      if (m.count) { m.instanceMatrix.needsUpdate = true; m.instanceColor.needsUpdate = true; }
+    }
+    rings.count = nr; if (nr) { rings.instanceMatrix.needsUpdate = true; rings.instanceColor.needsUpdate = true; }
+    this.unitMat.uniforms.time.value = t;
   }
   // trails: [{pts:[[lat,lon,alt],...], color:[r,g,b]}]
   setTrails(list) {
@@ -788,7 +961,6 @@ export class Globe {
       this.ringGroup.add(line);
     }
   }
-  setPixelScale() { if (this.unitPts) this.unitPts.material.uniforms.scale.value = this.container.clientHeight * 0.0022 * this.renderer.getPixelRatio(); }
 
   // update camera (call before projecting markers each frame)
   tick() {
@@ -800,7 +972,6 @@ export class Globe {
     this.controls.update();
     if (this.alwaysDay) this.u.sunDir.value.copy(this.camera.position).normalize().add(new THREE.Vector3(0, 0.25, 0)).normalize();
     this.earth.material.uniforms.time.value = t;
-    if (this.unitPts) { this.unitPts.material.uniforms.time.value = t; this.setPixelScale(); }
     for (const line of this.routeGroup.children) if (line.material.dashed) line.material.dashOffset -= 0.05 * dt;
     for (const line of this.pathGroup.children) line.material.dashOffset -= 0.02 * dt;
     for (const m of [...this.fxGroup.children]) {

@@ -5,6 +5,7 @@ import { Sim, kmBetween } from './sim.js';
 import { AI } from './ai.js';
 import { AGES, ageScale } from './eras.js';
 import { UNITS, SPEEDS, SETTLEMENTS } from './units.js';
+import { modelFor } from './unitmodels.js';
 import { TERRAIN, RES, classify, generateDeposits, rng, known } from './resources.js';
 import { styleName, resolveEvent } from './gov.js';
 import { civColor } from './names.js';
@@ -14,6 +15,7 @@ import { openWar, closeWar, openCabinet, closeCabinet, cabinetReady, showManual,
 import { openImperial, closeImperial, imperialReady, councilName } from './imperial.js';
 import { lensColor, lensLegend } from './society-ui.js';
 import { SCENARIOS } from './crises.js';
+import { seasonName, SEASON_ICON, cold } from './seasons.js';
 
 const SAVE_KEY = 'agesofcommand.v1';
 const SUN0 = Date.UTC(2030, 2, 20, 6, 0, 0);
@@ -268,7 +270,8 @@ function drawUnits() {
     const col = hexRGB(G.sim.col(u.nation));
     const flag = (G.sel.has(u.id) ? 1 : 0) | (u.nation === s.player ? 2 : 0) | (air ? 4 : 0) | (T.domain === 'sea' ? 8 : 0) | (u.fighting ? 16 : 0);
     const size = (air ? 5.5 : T.domain === 'sea' ? (T.role === 'carrier' ? 9 : 7.5) : T.role === 'mounted' ? 7 : 6.3) * (u.nation === s.player ? 1.1 : 1);
-    list.push({ lat: p[0], lon: p[1], alt: air ? 0.014 : 0, color: col, size, flag });
+    const f = G.formOf?.get(u.id);
+    list.push({ id: u.id, lat: p[0], lon: p[1], alt: air ? 0.014 : 0, color: col, size, flag, model: modelFor(T), moving: !!u.move, form: f, slot: f?.[2] || 0 });
     if (air || (T.domain === 'sea' && u.move)) {
       let h = G.trails.get(u.id);
       if (!h) { h = []; G.trails.set(u.id, h); }
@@ -307,6 +310,9 @@ function computeStacks() {
   for (const st of stacks) { if (st.moving) continue; const k = st.nation + '|' + st.loc + '|' + st.domain; if (!byTile.has(k)) byTile.set(k, []); byTile.get(k).push(st); }
   for (const list of byTile.values()) list.sort((a, b) => (a.units[0].det || 0) - (b.units[0].det || 0)).forEach((st, k) => { st.slot = k - (list.length - 1) / 2; });
   G.stacks = stacks;
+  // each unit's place in its stack's formation
+  G.formOf = new Map();
+  for (const st of stacks) st.units.forEach((u, k) => G.formOf.set(u.id, [k, st.units.length, st.slot || 0]));
   G.capMarks = s.regions.filter(r => r.capture).map(r => ({ key: 'c' + r.i, lat: w.regions[r.i].lat, lon: w.regions[r.i].lon, p: r.capture.p }));
   syncMarkerEls();
 }
@@ -316,9 +322,9 @@ function syncMarkerEls() {
   const make = (key, cls) => { let el = G.markerEls.get(key); if (!el) { el = document.createElement('div'); el.className = cls; host.appendChild(el); G.markerEls.set(key, el); } seen.add(key); return el; };
   for (const st of G.stacks) {
     const el = make('u' + st.key, 'tok');
-    const C = 2 * Math.PI * 13;
     const xs = st.xp >= 75 ? '★★★' : st.xp >= 50 ? '★★' : st.xp >= 25 ? '★' : '';
-    const html = `<svg class="ring" viewBox="0 0 30 30"><circle class="bg" cx="15" cy="15" r="13"/><circle class="hp" cx="15" cy="15" r="13" stroke="${st.hp < 0.35 ? '#ff5d5d' : st.hp < 0.7 ? '#ffb547' : '#5ee39a'}" stroke-dasharray="${(C * st.hp).toFixed(1)} ${C.toFixed(1)}"/></svg><div class="disc">${ICON[UNITS[st.main].sym] || ICON.inf}</div>${st.units.length > 1 ? `<b class="n">${st.units.length}</b>` : ''}${xs ? `<span class="xp">${xs}</span>` : ''}${st.moving ? '<span class="dir"><i></i></span>' : ''}`;
+    const hp = Math.round(st.hp * 100);
+    const html = `<i class="ic">${ICON[UNITS[st.main].sym] || ICON.inf}</i>${st.units.length > 1 ? `<b class="n">${st.units.length}</b>` : ''}${xs ? `<span class="xp">${xs}</span>` : ''}<span class="hp"><i style="width:${hp}%;background:${st.hp < 0.35 ? '#ff5d5d' : st.hp < 0.7 ? '#ffb547' : '#5ee39a'}"></i></span>`;
     if (el._h !== html) { el.innerHTML = html; el._h = html; }
     el.style.setProperty('--c', G.sim.col(st.nation));
     const cls = `tok${st.nation === s.player ? ' mine' : ' small'}${st.sel ? ' sel' : ''}${st.moving ? ' moving' : ''}${st.fight ? ' fight' : ''}`;
@@ -351,11 +357,10 @@ function placeMarkers() {
     if (st && !showOthers && st.nation !== s.player && !st.fight) hide = true;
     if (hide) { if (el.style.display !== 'none') el.style.display = 'none'; continue; }
     if (el.style.display === 'none') el.style.display = '';
-    const sz = st ? (st.nation === s.player ? 30 : 24) : 40;
-    const oy = st ? (st.domain === 'air' ? -38 : -26) : 12;
-    const ox = st?.slot ? st.slot * (sz + 4) : 0;
-    el.style.transform = `translate3d(${(p.x - sz / 2 + ox).toFixed(1)}px,${(p.y + oy - sz / 2).toFixed(1)}px,0)`;
-    if (st?.moving && st.toward) { const q = g.project(st.toward[0], st.toward[1], 1.01); const d = el.querySelector('.dir'); if (d) d.style.transform = `rotate(${(Math.atan2(q.y - p.y, q.x - p.x) * 180 / Math.PI + 90).toFixed(0)}deg)`; }
+    if (!st) { el.style.transform = `translate3d(${(p.x - 20).toFixed(1)}px,${(p.y + 12 - 20).toFixed(1)}px,0)`; continue; }
+    // a slim tag floating over the models
+    const ox = st.slot ? st.slot * 30 : 0, oy = st.domain === 'air' ? -42 : -24;
+    el.style.transform = `translate3d(${(p.x + ox).toFixed(1)}px,${(p.y + oy).toFixed(1)}px,0) translate(-50%,-100%)`;
   }
 }
 function placeLabels() {
@@ -664,6 +669,12 @@ function renderTop() {
   $('#tb-date').textContent = dstr();
   const A = AGES[N.age];
   const ab = $('#tb-age'); ab.textContent = N.ageAdv ? `${A.short} → ${AGES[N.age + 1].short}` : A.name; ab.style.setProperty('--ac', A.color);
+  const capR = G.world.regions[N.capital];
+  if (capR) {
+    const sn = seasonName(capR.lat, s.t), c = cold(capR.lat, s.t);
+    const se = $('#tb-season'), txt = `${SEASON_ICON[sn]} ${sn}`;
+    if (se.textContent !== txt) { se.textContent = txt; se.title = sn === 'Winter' ? `Winter at your capital${c > 0.35 ? ': armies march slower, and those camped outside your lands suffer the cold' : ''}. Harvests are lean.` : sn === 'Summer' ? 'Summer at your capital: harvests are rich.' : sn === 'Wet' || sn === 'Dry' ? 'The tropics know only wet and dry seasons.' : `${sn} at your capital.`; }
+  }
   $('#brand-name').textContent = styleName(N);
   $('#brand-sub').textContent = `${N.name} · ${AGES[N.age].name}`;
   $('#crest').style.background = N.color; $('#crest').textContent = N.name.slice(0, 2).toUpperCase();

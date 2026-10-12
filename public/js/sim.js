@@ -1,6 +1,7 @@
 // Real-time world simulation, Stone Age to the Information Age. One step = one game hour; the economy ticks daily.
 // The world starts as unclaimed wilderness with native peoples. Civilizations claim tiles, work their resources,
 // grow settlements, research through ten ages, and fight with units that have physical positions.
+import { cold, harvest } from './seasons.js';
 import { AGES, NAGES, ageScale, YEARS_PER_DAY } from './eras.js';
 import { TERRAIN, RES, IMPROVEMENTS, IMP_ORDER, IMP_CAP, LABOR, STRATEGIC, LUXURIES, classify, generateDeposits, rng, known } from './resources.js';
 import { pressureDaily, onAcquire, addInfamy } from './pressure.js';
@@ -395,6 +396,7 @@ export class Sim {
         if (T.domain === 'land') {
           if (w.regions[a].sea || w.regions[b].sea) speed = Math.max(speed, (N.techs.navigation ? 600 : N.techs.sailing ? 380 : 220) / 24);
           else speed /= TERRAIN[this.T[b].terrain]?.move || 1;
+          speed *= 1 - 0.3 * cold(w.regions[b].lat, s.t); // snow and mud
         }
         if (u.fighting > 0 && T.domain === 'land') speed *= 0.45;
         m.prog += speed;
@@ -927,7 +929,7 @@ export class Sim {
     }
     // technology multipliers
     const mech = 1 + 0.3 * a; // saws, cranes and machines multiply what each worker cuts and quarries
-    o.food *= (1 + m.food) * (1 + 0.2 * Math.max(0, a - 5)) * ok; o.wood *= (1 + m.wood) * mech * ok; o.stone *= (1 + m.stone) * mech * ok; o.metal *= (1 + m.metal) * ok;
+    o.food *= (1 + m.food) * (1 + 0.2 * Math.max(0, a - 5)) * ok * harvest(this.w.regions[r.i].lat, this.s.t); o.wood *= (1 + m.wood) * mech * ok; o.stone *= (1 + m.stone) * mech * ok; o.metal *= (1 + m.metal) * ok;
     o.wealth *= (1 + m.wealth) * ok; o.oil *= (1 + m.oil) * ok; o.rp *= ok; o.energy *= (1 + m.energy) * ok;
     o.labor = lr; o.levels = levels;
     return o;
@@ -1036,6 +1038,12 @@ export class Sim {
       }
       // heal units at home
       for (const u of s.units) if (u.nation === N.code && !u.fighting && u.hp < u.mhp && s.regions[u.loc]?.owner === N.code) u.hp = Math.min(u.mhp, u.hp + u.mhp * 0.03);
+      // armies wintering away from home suffer the cold (never fatal on its own)
+      for (const u of s.units) {
+        if (u.nation !== N.code || UNITS[u.type].domain !== 'land' || s.regions[u.loc]?.owner === N.code) continue;
+        const c = cold(this.w.regions[u.loc]?.lat || 0, s.t);
+        if (c > 0.35) u.hp = Math.max(u.mhp * 0.25, u.hp - u.mhp * 0.015 * c);
+      }
       this.researchDaily(N);
       if (N.ageAdv && --N.ageAdv.left <= 0) this.finishAdvance(N);
       // warheads
