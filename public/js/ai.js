@@ -96,7 +96,8 @@ export class AI {
     }
     // expansion
     const expandDrive = (N.ai ? N.traits.expansion : focus === 'expand' ? 1 : focus === 'balanced' || !focus ? 0.6 : 0.2);
-    if (expandDrive > 0.15 && sim.activeClaims(c) < sim.maxClaims(N)) {
+    const strained = N.ai && ((N.adminOver || 0) > 5 || (N.expHeat || 0) > 9) && Math.random() < 0.75; // consolidate before growing further
+    if (expandDrive > 0.15 && !strained && sim.activeClaims(c) < sim.maxClaims(N)) {
       let reach = [...sim.claimReach(c)];
       if (reach.length && Math.random() < 0.4 + expandDrive * 0.6) {
         if (reach.length > 40) reach = reach.sort(() => Math.random() - 0.5).slice(0, 40); // a scout's survey, not a census
@@ -360,7 +361,8 @@ export class AI {
         sc -= sim.alliesOf(o).length * 0.15;
         sc -= sim.opinion(c, o) / 45;
         if (rel === 'nap') sc -= 1.2 * t.loyalty;
-        if (o === s.player) sc -= 0.1;
+        if (o === s.player) sc += Math.max(0, s.difficulty || 0) * 0.8 + (sim.score(o) > sim.score(c) * 1.3 ? 0.35 : -0.1); // a rising player draws rivals
+        sc += (s.nations[o].infamy || 0) / 20 - (N.infamy || 0) / 12; // the infamous make tempting targets; our own infamy counsels restraint
         sc += warAffinity(sim, c, o); // holy cities and kin under foreign rule
         if (sc > bs) { bs = sc; best = o; }
       }

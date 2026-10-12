@@ -10,6 +10,7 @@ import { TRADE_WILL, TRADE_FLOOR, addTradeGoal } from './ai.js';
 import { G, $, esc, fmt, sgn, pct, popStr, toast, dstr, dropToast, setHTML, pips, stars, avatar, costStr, STOCK_ICON, STOCK_NAME, ordinal } from './ui.js';
 import { openWar, openCabinet, cabinetReady, openTree, queueTech } from './dialogs.js';
 import { renderSociety, tileSocietyHTML } from './society-ui.js';
+import { plagueStatus } from './crises.js';
 import { lineOptions } from './units.js';
 
 const REL_LABEL = { war: 'At war', peace: 'Peace', nap: 'Non-aggression', alliance: 'Alliance' };
@@ -840,7 +841,11 @@ function renderWorld(host) {
   if (formed.length) h += `<div class="sec"><div class="sec-title">Great powers proclaimed</div>${formed.map(([id, c]) => `<div class="row"><span>${esc(sim.formables.find(f => f.id === id)?.title || id)}</span><span class="small" style="color:${sim.col(c)}">${esc(sim.nm(c))}</span></div>`).join('')}</div>`;
   const wars = Object.entries(s.rel).filter(([, v]) => v === 'war').map(([k]) => k.split('|')).filter(([a, b]) => [a, b].some(x => x === P || Me.known.includes(x)));
   h += `<div class="sec"><div class="sec-title">Wars (${wars.length})</div>${wars.map(([a, b]) => `<div class="row"><span><span style="color:${sim.col(a)}">${esc(sim.nm(a))}</span> <span class="muted">vs</span> <span style="color:${sim.col(b)}">${esc(sim.nm(b))}</span></span><span class="muted small">${s.regions.filter(r => r.owner === a && r.core === b).length} / ${s.regions.filter(r => r.owner === b && r.core === a).length} lands taken</span></div>`).join('') || '<div class="muted small">No wars that you know of.</div>'}</div>`;
-  const F = { all: 'All', vassal: 'Vassals', rise: 'New peoples', age: 'Ages', war: 'War', capture: 'Conquest', treaty: 'Treaties', trade: 'Trade', tech: 'Learning', gov: 'Politics', faith: 'Faith', unrest: 'Unrest', wonder: 'Wonders' };
+  const pl = plagueStatus(sim), cr = (s.crises || []).filter(C => s.t < C.until);
+  if (pl || cr.length) h += `<div class="sec"><div class="sec-title">World crises</div>${pl ? `<div class="row"><span class="warn-text">Pandemic: ${esc(pl.name)}</span><span class="small muted">${pl.lands} lands sick · day ${pl.days}</span></div>` : ''}${cr.map(C => `<div class="row"><span class="warn-text">${esc(C.name)}</span><span class="small muted">${Math.ceil((C.until - s.t) / 24)} days left</span></div>`).join('')}</div>`;
+  const co = (s.coalitions || []).filter(C => C.target === P || Me.known.includes(C.target));
+  if (co.length) h += `<div class="sec"><div class="sec-title">Coalitions</div>${co.map(C => `<div class="row"><span>Against <span style="color:${sim.col(C.target)}">${esc(sim.nm(C.target))}</span>${C.members.some(m => sim.atWar(m, C.target)) ? ' <span class="warn-text small">at war</span>' : ''}</span><span class="small muted">${C.members.length} members</span></div>`).join('')}</div>`;
+  const F = { all: 'All', vassal: 'Vassals', rise: 'New peoples', age: 'Ages', war: 'War', capture: 'Conquest', treaty: 'Treaties', trade: 'Trade', tech: 'Learning', gov: 'Politics', faith: 'Faith', unrest: 'Unrest', disaster: 'Crises', wonder: 'Wonders' };
   h += `<div class="sec"><div class="sec-title">Chronicle</div><div class="filters">${Object.entries(F).map(([k, v]) => `<span class="chip ${G.intelFilter === k ? 'on' : ''}" data-f="${k}">${v}</span>`).join('')}</div>`;
   const vis = e => e.major || e.nations?.includes(P) || Me.known.some(c => e.nations?.includes(c));
   const items = s.events.filter(e => vis(e) && (G.intelFilter === 'all' ? e.kind !== 'loss' : e.kind === G.intelFilter || (G.intelFilter === 'treaty' && e.kind === 'peace') || (G.intelFilter === 'unrest' && e.kind === 'terror') || (G.intelFilter === 'wonder' && e.kind === 'formed'))).slice(-120).reverse();

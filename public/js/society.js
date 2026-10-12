@@ -5,6 +5,7 @@ import { makeChar, hireCost, GOV_TYPES, govAvailable, lawOpt, computeMods, EVENT
 import { cultureOf, personName } from './names.js';
 import { UNITS } from './units.js';
 import { PROV_NAMES } from './provnames.js';
+import { expansionCauses, reachKm } from './pressure.js';
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const pick = a => a[(Math.random() * a.length) | 0];
@@ -307,7 +308,7 @@ const revoltKind = (sim, r, N) => r.core && r.core !== r.owner && sim.s.nations[
 export const REVOLT_NAME = { insurgency: 'Insurgency', separatist: 'Separatist uprising', sectarian: 'Religious revolt', peasant: 'Popular uprising' };
 function startRevolt(sim, r, N) {
   const kind = revoltKind(sim, r, N);
-  r.revolt = { kind, str: 1 + Math.sqrt(Math.max(0, r.pop)) * 0.35, since: sim.s.t };
+  r.revolt = { kind, str: 1 + Math.min(2.5, Math.sqrt(Math.max(0, r.pop)) * 0.15), since: sim.s.t };
   r.rev = 0;
   const nm = sim.w.regions[r.i].name;
   const txt = { insurgency: `Insurgents rise against the ${sim.nm(N.code)} occupation of ${nm}.`, separatist: `The ${cultureName(sim.s, r.cul)} people of ${nm} rise up against ${sim.nm(N.code)} rule.`, sectarian: `Followers of ${theFaith(sim.s, r.rel)} in ${nm} take up arms against the ${sim.nm(N.code)}.`, peasant: `Revolt in ${nm}! The people of the ${sim.nm(N.code)} rise against their rulers.` }[kind];
@@ -318,11 +319,27 @@ function revoltOutcome(sim, r, N) {
   r.revolt = null; r.rev = 0;
   if (kind === 'insurgency') {
     const to = r.core; r.unrest = 0.3;
-    sim.transfer(r, to, true);
+    sim.transfer(r, to, true, 'return');
     sim.emit('unrest', `Insurgents drive the ${sim.nm(N.code)} out of ${w.regions[r.i].name}; it returns to the ${sim.nm(to)}.`, [N.code, to], { loc: r.i, major: true });
     return;
   }
   if (r.i === N.capital) { revolution(sim, N); return; }
+  // most risings win concessions rather than countries
+  const far = kmLL(sim.anchor(N.capital), sim.anchor(r.i)) > reachKm(N);
+  if ((kind === 'peasant' && !far) || (kind === 'sectarian' && Math.random() < 0.5)) {
+    r.unrest = 0.3; N.gov.stability = clamp(N.gov.stability - 0.06, 0, 1); N.gov.approval = clamp(N.gov.approval - 0.04, 0, 1); N.wealth -= 4 * ageScale(N.age);
+    let what;
+    if (kind === 'sectarian') {
+      if (N.techs.humanism && N.gov.laws.religion !== 'tolerance' && N.gov.laws.religion !== 'secular') { N.gov.laws.religion = 'tolerance'; computeMods(s, N); what = 'religious tolerance is proclaimed'; }
+      else what = 'their temples are restored and their clergy freed';
+      for (const x of sim.regionsOf(N.code)) if (x.rel === r.rel) x.unrest = Math.max(0, x.unrest - 0.15);
+    } else {
+      const pid = sim.provOf[r.i]; if (pid && N.governors?.[pid]) { retire(s, N.governors[pid]); delete N.governors[pid]; }
+      what = 'taxes are cut and the governor recalled';
+    }
+    sim.emit('unrest', `The rebels of ${w.regions[r.i].name} force the ${sim.nm(N.code)} to terms: ${what}.`, [N.code], { loc: r.i, major: N.code === s.player });
+    return;
+  }
   // the revolt spreads to restless neighbours of the same people and breaks away
   const cluster = [r.i], q = [r.i];
   while (q.length && cluster.length < 8) {
@@ -362,7 +379,7 @@ export function unrestCauses(sim, r, N, ctx) {
   if (g.stability < 0.3) out.push(['Unstable government', 0.12]);
   if (g.approval < 0.4) out.push(['Unpopular rulers', (0.4 - g.approval) * 0.5]);
   if (r.cul !== N.cul) { const C = s.cultures[r.cul], same = C && C.group === N.culture; out.push([`Foreign people (${C?.adj || '?'})`, (same ? 0.1 : 0.26) * Math.max(0.1, 1 + (m.cultureUnrest || 0))]); }
-  if (r.rel !== N.faith) { const F = s.faiths[r.rel]; out.push([`Other faith (${F?.name || '?'})`, 0.2 * Math.max(0.1, 1 + (m.faithUnrest || 0)) * (F?.kind === 'folk' && fstr(s.faiths[N.faith]) > 1.5 ? 0.6 : 1)]); }
+  if (r.rel !== N.faith) { const F = s.faiths[r.rel]; out.push([`Other faith (${F?.name || '?'})`, 0.2 * Math.max(0.1, 1 + (m.faithUnrest || 0)) * (F?.kind === 'folk' && fstr(s.faiths[N.faith]) > 1.5 ? 0.6 : 1) * (N.age >= 8 ? 0.45 : N.age >= 6 ? 0.65 : 1)]); } // faith matters less in secular ages
   if (r.core && r.core !== r.owner) { const C = s.nations[r.core]; out.push([C?.alive ? `Occupied land of the ${C.name}` : 'Conquered land', C?.alive ? 0.32 + (C.techs?.guerrilla_warfare ? 0.08 : 0) : 0.1]); }
   const gv = ctx.gov.get(r.i);
   if (gv) { const k = gv.skill + (m.govSkill || 0) - 3; out.push([`Governor ${gv.name}`, -0.03 * k - (gv.traits.includes('Populist') ? 0.05 : 0) + (gv.traits.includes('Corrupt') ? 0.03 : 0)]); }
@@ -373,6 +390,8 @@ export function unrestCauses(sim, r, N, ctx) {
   if (m.unrestMin) out.push([m.unrestMin > 0 ? 'Social media outrage' : 'Census and policing', m.unrestMin]);
   const mv = ctx.mov.get(r.i); if (mv) out.push([mv.name, 0.25 * mv.str]);
   if (r.revolt) out.push(['Open revolt', 0.2]);
+  if ((r.sick || 0) > s.t) out.push(['Plague', 0.15]);
+  expansionCauses(sim, r, N, out);
   const target = clamp(out.reduce((a, x) => a + x[1], 0), 0, 0.95);
   return { causes: out, target };
 }
@@ -424,6 +443,8 @@ export function societyDaily(sim) {
       const gv = ctx.gov.get(i); if (gv) out *= 1 + 0.02 * (gv.skill + (m.govSkill || 0) - 4) - (gv.traits.includes('Corrupt') ? 0.08 : 0) + (gv.traits.includes('Scholar') ? 0.02 : 0);
       const my = r.mayor && s.chars[r.mayor]; if (my) out *= 1 + 0.03 * (my.skill - 4) - (my.traits.includes('Corrupt') ? 0.05 : 0);
       if (r.revolt) out *= 0.45;
+      if ((r.sick || 0) > s.t) out *= 0.85;
+      if ((r.blight || 0) > s.t) out *= 0.7;
       if (r.cul !== N.cul && s.cultures[r.cul]?.group !== N.culture) out *= 0.93;
       sim.socOut[i] = out;
       // simmering anger becomes revolt
@@ -434,13 +455,13 @@ export function societyDaily(sim) {
       } else {
         const R = r.revolt, us = s.units.filter(u => u.loc === i && u.nation === N.code && !u.move && UNITS[u.type].domain === 'land');
         let sup = 0;
-        for (const u of us) { const ageK = clamp(1 + (UNITS[u.type].age - N.age) * 0.25, 0.3, 1.2); sup += 0.07 * (u.hp / u.mhp) * ageK * (1 + (m.suppress || 0)); u.hp -= u.mhp * 0.012 * R.str / (R.str + us.length); }
+        for (const u of us) { const ageK = clamp(1 + (UNITS[u.type].age - N.age) * 0.25, 0.3, 1.2); sup += 0.12 * (u.hp / u.mhp) * ageK * (1 + (m.suppress || 0)); u.hp -= u.mhp * 0.012 * R.str / (R.str + us.length); }
         for (const u of us) if (u.hp <= 0) sim.removeUnit(u);
         R.str = R.str * (1 + 0.02 * (r.unrest + 0.3)) - sup;
         if (R.str <= 0.05) {
           r.revolt = null; r.rev = 0; r.unrest = clamp(r.unrest - 0.25, 0, 1); r.pop *= 0.97;
           sim.emit('unrest', `Order is restored in ${sim.w.regions[i].name}: the ${REVOLT_NAME[R.kind].toLowerCase()} is crushed.`, [N.code], { loc: i });
-        } else if (R.str > 6 || (s.t - R.since > 24 * 25 && R.str > 1.2)) revoltOutcome(sim, r, N);
+        } else if (R.str > 8 || (s.t - R.since > 24 * 30 && R.str > 1.5)) revoltOutcome(sim, r, N);
       }
       if (r.i === N.capital) continue;
       for (const f of holyAt.get(i) || []) if (N.faith === f) holy++;
@@ -660,9 +681,9 @@ export function aiOfficials(sim, c) {
 export function aiRevolts(sim, c) {
   const s = sim.s;
   for (const i of sim.owned.get(c) || []) {
-    const r = s.regions[i]; if (!r.revolt) continue;
+    const r = s.regions[i]; if (!r.revolt && (r.rev || 0) < 0.5) continue;
     const here = s.units.filter(u => u.nation === c && (u.loc === i || u.move?.path.at(-1) === i) && UNITS[u.type].domain === 'land').length;
-    if (here >= Math.ceil(r.revolt.str / 1.2)) continue;
+    if (here >= (r.revolt ? Math.ceil(r.revolt.str / 1.5) : 1)) continue; // brewing trouble gets a garrison too
     const idle = s.units.filter(u => u.nation === c && !u.move && !u.fighting && UNITS[u.type].domain === 'land' && u.loc !== i && !s.regions[u.loc]?.revolt && !u.group).slice(0, 3);
     if (idle.length) sim.order(idle.map(u => u.id), i);
   }

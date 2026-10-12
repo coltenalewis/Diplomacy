@@ -13,6 +13,7 @@ import { renderPanel, switchTab, openDossier, answer, renderTicker } from './pan
 import { openWar, closeWar, openCabinet, closeCabinet, cabinetReady, showManual, closeTree } from './dialogs.js';
 import { openImperial, closeImperial, imperialReady, councilName } from './imperial.js';
 import { lensColor, lensLegend } from './society-ui.js';
+import { SCENARIOS } from './crises.js';
 
 const SAVE_KEY = 'agesofcommand.v1';
 const SUN0 = Date.UTC(2030, 2, 20, 6, 0, 0);
@@ -36,7 +37,7 @@ async function boot() {
 }
 
 // ======================================================================= setup
-const SETUP = { emerge: 1, civs: 24, age: 0, diff: 0, temper: 1, conquest: 0.5, name: '', color: '#4f8dff', tile: null, seed: Math.floor(Math.random() * 2 ** 31) };
+const SETUP = { scenario: 'standard', emerge: 1, civs: 24, age: 0, diff: 0, temper: 1, conquest: 0.5, name: '', color: '#4f8dff', tile: null, seed: Math.floor(Math.random() * 2 ** 31) };
 const COLORS = ['#4f8dff', '#e6194b', '#3cb44b', '#ffe119', '#f58231', '#911eb4', '#46f0f0', '#f032e6', '#bcf60c', '#ff9ec4', '#00a6a6', '#c9a0ff', '#b8742a', '#ffffff'];
 function showSetup() {
   setSpeed(0); G.pick = null; $('#pickbar').classList.add('hidden');
@@ -46,6 +47,8 @@ function showSetup() {
     <div class="kicker">From the Stone Age to the stars</div>
     <h1>Ages of <span>Command</span></h1>
     <p class="muted">The world begins empty: wild lands, wandering peoples and a handful of tribes. Claim the land, work its resources, grow camps into cities, and climb through ten ages of history: from flint tools and the first villages, through bronze, iron, empires, castles, the age of sail, steam and oil, to the bomb and artificial intelligence. Govern, negotiate, trade and fight in real time.</p>
+    <h2>Scenario</h2>
+    <div class="opt-row wrap">${Object.entries(SCENARIOS).map(([k, v]) => `<button class="btn ${SETUP.scenario === k ? 'on' : ''}" data-sc="${k}">${v.name}<small>${v.desc}</small></button>`).join('')}</div>
     <h2>Civilizations</h2>
     <div class="opt-row slider-row"><input type="range" id="st-civs" min="2" max="200" value="${SETUP.civs}"><span class="big2" id="st-civs-v">${SETUP.civs}</span><span class="muted small">rival tribes placed at random across the world</span></div>
     <h2>Starting age</h2>
@@ -53,7 +56,7 @@ function showSetup() {
     <h2>New peoples</h2>
     <div class="opt-row">${opt('emerge', 1, 'Rise and fall', 'Tribes unite into new civilizations; unstable empires suffer breakaways (up to 200)')}${opt('emerge', 0, 'Fixed', 'Only the civilizations placed at the start')}</div>
     <h2>Rival rulers</h2>
-    <div class="opt-row">${opt('diff', -0.2, 'Chieftain', 'Rivals develop slowly')}${opt('diff', 0, 'Warlord', 'An even contest')}${opt('diff', 0.3, 'Emperor', 'Rivals produce and research faster')}${opt('diff', 0.6, 'Deity', 'Brutal')}</div>
+    <div class="opt-row">${opt('diff', -0.2, 'Chieftain', 'Rivals develop slowly and forgive easily')}${opt('diff', 0, 'Warlord', 'An even contest')}${opt('diff', 0.3, 'Emperor', 'Rivals grow faster, distrust you sooner and gang up on a leader')}${opt('diff', 0.6, 'Deity', 'Brutal: rivals outproduce you and coalitions form quickly')}</div>
     <h2>Temperament</h2>
     <div class="opt-row">${opt('temper', 0.5, 'Peaceful', 'Wars are rare')}${opt('temper', 1, 'Historical', 'Ambitious rulers fight')}${opt('temper', 1.7, 'Bloody', 'Constant warfare')}</div>
     <h2>Victory</h2>
@@ -70,6 +73,7 @@ function showSetup() {
   const card = $('#modal-card');
   for (const b of card.querySelectorAll('[data-k]')) b.onclick = () => { SETUP[b.dataset.k] = +b.dataset.v; showSetup(); };
   for (const b of card.querySelectorAll('[data-col]')) b.onclick = () => { SETUP.color = b.dataset.col; showSetup(); };
+  for (const b of card.querySelectorAll('[data-sc]')) b.onclick = () => { SETUP.scenario = b.dataset.sc; showSetup(); };
   $('#st-civs').oninput = e => { SETUP.civs = +e.target.value; $('#st-civs-v').textContent = SETUP.civs; };
   $('#st-name').oninput = e => { SETUP.name = e.target.value.trim(); };
   $('#st-go').onclick = beginPick;
@@ -129,7 +133,7 @@ async function useMap(v) {
 }
 async function startGame() {
   await useMap(G.currentMap);
-  const sim = new Sim(G.world, G.geo, { player: 'C0', civs: SETUP.civs, startAge: SETUP.age, difficulty: SETUP.diff, temper: SETUP.temper, conquest: SETUP.conquest, seed: SETUP.seed, startTile: SETUP.tile, playerName: SETUP.name || null, playerColor: SETUP.color, emergence: !!SETUP.emerge, maxCivs: 200 });
+  const sim = new Sim(G.world, G.geo, { player: 'C0', civs: SETUP.civs, startAge: SETUP.age, difficulty: SETUP.diff, temper: SETUP.temper, conquest: SETUP.conquest, seed: SETUP.seed, startTile: SETUP.tile, playerName: SETUP.name || null, playerColor: SETUP.color, emergence: !!SETUP.emerge, maxCivs: 200, scenario: SETUP.scenario });
   SETUP.seed = Math.floor(Math.random() * 2 ** 31); previewCache.clear();
   attach(sim);
   const N = sim.s.nations[sim.s.player];
@@ -284,7 +288,7 @@ function computeStacks() {
   for (const u of s.units) {
     if (airborne(u)) continue;
     const T = UNITS[u.type];
-    const key = u.move ? `${u.nation}|${u.move.path[u.move.seg]}>${u.move.path[u.move.seg + 1]}|${u.move.path.at(-1)}|${T.domain}` : `${u.nation}|${u.loc}|${T.domain}`;
+    const key = (u.move ? `${u.nation}|${u.move.path[u.move.seg]}>${u.move.path[u.move.seg + 1]}|${u.move.path.at(-1)}|${T.domain}` : `${u.nation}|${u.loc}|${T.domain}`) + '|' + (u.det || 0);
     let st = m.get(key);
     if (!st) { st = { key, nation: u.nation, loc: u.loc, units: [], domain: T.domain, moving: !!u.move, fight: false, dest: u.move ? u.move.path.at(-1) : null }; m.set(key, st); }
     st.units.push(u); if (u.fighting) st.fight = true;
@@ -298,6 +302,10 @@ function computeStacks() {
     st.sel = st.units.some(u => G.sel.has(u.id));
     if (st.moving) { const R = w.regions[st.dest]; st.toward = [R.lat, R.lon]; }
   }
+  // detachments sharing a tile sit side by side
+  const byTile = new Map();
+  for (const st of stacks) { if (st.moving) continue; const k = st.nation + '|' + st.loc + '|' + st.domain; if (!byTile.has(k)) byTile.set(k, []); byTile.get(k).push(st); }
+  for (const list of byTile.values()) list.sort((a, b) => (a.units[0].det || 0) - (b.units[0].det || 0)).forEach((st, k) => { st.slot = k - (list.length - 1) / 2; });
   G.stacks = stacks;
   G.capMarks = s.regions.filter(r => r.capture).map(r => ({ key: 'c' + r.i, lat: w.regions[r.i].lat, lon: w.regions[r.i].lon, p: r.capture.p }));
   syncMarkerEls();
@@ -345,7 +353,8 @@ function placeMarkers() {
     if (el.style.display === 'none') el.style.display = '';
     const sz = st ? (st.nation === s.player ? 30 : 24) : 40;
     const oy = st ? (st.domain === 'air' ? -38 : -26) : 12;
-    el.style.transform = `translate3d(${(p.x - sz / 2).toFixed(1)}px,${(p.y + oy - sz / 2).toFixed(1)}px,0)`;
+    const ox = st?.slot ? st.slot * (sz + 4) : 0;
+    el.style.transform = `translate3d(${(p.x - sz / 2 + ox).toFixed(1)}px,${(p.y + oy - sz / 2).toFixed(1)}px,0)`;
     if (st?.moving && st.toward) { const q = g.project(st.toward[0], st.toward[1], 1.01); const d = el.querySelector('.dir'); if (d) d.style.transform = `rotate(${(Math.atan2(q.y - p.y, q.x - p.x) * 180 / Math.PI + 90).toFixed(0)}deg)`; }
   }
 }
@@ -601,6 +610,7 @@ function orderTo(i) {
   const sim = G.sim, s = sim.s, P = s.player, N = s.nations[P];
   const units = selectedUnits().filter(u => u.nation === P);
   if (!units.length) return;
+  if (new Set(units.map(u => u.det || 0)).size > 1) { const d = units[0].det || 0; for (const u of units) u.det = d; }
   const r = s.regions[i], R = G.world.regions[i];
   const air = units.filter(u => UNITS[u.type].domain === 'air');
   const rest = units.filter(u => UNITS[u.type].domain !== 'air');
@@ -640,9 +650,9 @@ function onEvent(e) {
   const go = () => { if (e.loc !== undefined) { flyTile(e.loc); selectRegion(e.loc); } };
   if (e.kind === 'nuke') toast('Nuclear detonation', e.text, 'nuke', go);
   else if (e.kind === 'age' && mine) toast('A new age', e.text, 'age', go);
-  else if (mine && ['war', 'capture', 'peace', 'treaty', 'trade', 'econ', 'gov', 'contact', 'formed', 'wonder', 'claim', 'rise', 'vassal', 'faith', 'unrest', 'terror'].includes(e.kind)) {
-    const bad = e.kind === 'war' || e.kind === 'econ' || e.kind === 'unrest' || e.kind === 'terror' || (e.kind === 'capture' && e.nations[1] === s.player) || (e.kind === 'trade' && e.text.includes('blockad'));
-    toast({ gov: 'Government', contact: 'Explorers', formed: 'Empire', wonder: 'Wonder', claim: 'Settlers', rise: 'A new people', vassal: 'Vassals', faith: 'Faith', unrest: 'Unrest', terror: 'Terror' }[e.kind] || e.kind[0].toUpperCase() + e.kind.slice(1), e.text, bad ? 'warn' : 'good', go);
+  else if (mine && ['war', 'capture', 'peace', 'treaty', 'trade', 'econ', 'gov', 'contact', 'formed', 'wonder', 'claim', 'rise', 'vassal', 'faith', 'unrest', 'terror', 'disaster'].includes(e.kind)) {
+    const bad = e.kind === 'war' || e.kind === 'econ' || e.kind === 'unrest' || e.kind === 'terror' || e.kind === 'disaster' || (e.kind === 'capture' && e.nations[1] === s.player) || (e.kind === 'trade' && e.text.includes('blockad'));
+    toast({ gov: 'Government', contact: 'Explorers', formed: 'Empire', wonder: 'Wonder', claim: 'Settlers', rise: 'A new people', vassal: 'Vassals', faith: 'Faith', unrest: 'Unrest', terror: 'Terror', disaster: 'Crisis' }[e.kind] || e.kind[0].toUpperCase() + e.kind.slice(1), e.text, bad ? 'warn' : 'good', go);
   } else if (mine && (e.kind === 'build' || e.kind === 'tech')) toast(e.kind === 'tech' ? 'Discovery' : 'Works', e.text, '', go);
   else if (e.major) toast('World', e.text, 'warn', go);
   renderTicker();
@@ -689,11 +699,37 @@ function renderStanding() {
     `<div class="muted" style="margin-top:6px">${alive} civilizations · ${Object.values(s.rel).filter(v => v === 'war').length} wars · ${ranks.length - 1} known to you</div>`;
   if (setHTML($('#standing-body'), h)) for (const e of document.querySelectorAll('.rank[data-c]')) e.onclick = () => openDossier(e.dataset.c);
 }
+// split the selected army into k detachments with an even mix of unit types and strength
+function splitSelection(k) {
+  const sim = G.sim, s = sim.s;
+  const units = selectedUnits().filter(u => u.nation === s.player && !u.move);
+  if (units.length < k) return toast('Command', `Need at least ${k} units to split ${k} ways.`, 'warn');
+  const sorted = units.slice().sort((a, b) => (a.type < b.type ? -1 : a.type > b.type ? 1 : b.hp / b.mhp - a.hp / a.mhp));
+  const ids = [units[0].det || 0]; for (let j = 1; j < k; j++) ids.push(s.detId = (s.detId || 0) + 1);
+  sorted.forEach((u, n) => { u.det = ids[n % k]; });
+  G.sel.clear(); for (const u of units) if (u.det === ids[0]) G.sel.add(u.id);
+  computeStacks(); renderSelbar(); updateRings(); renderPanel(true);
+  toast('Command', `The army divides into ${k} detachments of about ${Math.round(units.length / k)} units. Click each badge to command it.`, 'good');
+}
+// rejoin every detachment of ours on the selected units' tiles
+function mergeHere() {
+  const sim = G.sim, s = sim.s, sel = selectedUnits().filter(u => u.nation === s.player);
+  const locs = new Set(sel.map(u => u.loc)); let n = 0;
+  for (const u of s.units) if (u.nation === s.player && !u.move && locs.has(u.loc) && UNITS[u.type].domain !== 'air') { if ((u.det || 0) !== (sel[0]?.det || 0)) n++; u.det = sel[0]?.det || 0; G.sel.add(u.id); }
+  computeStacks(); renderSelbar(); updateRings(); renderPanel(true);
+  toast('Command', n ? 'The detachments rejoin the main army.' : 'Nothing to merge here.', n ? 'good' : '');
+}
 function renderSelbar() {
   const units = selectedUnits(); const bar = $('#selbar');
   if (!units.length) { bar.classList.add('hidden'); return; }
   const cnt = {}; for (const u of units) cnt[UNITS[u.type].name] = (cnt[UNITS[u.type].name] || 0) + 1;
   bar.innerHTML = `<span class="hi"><b>${units.length}</b> selected</span><span>${Object.entries(cnt).map(([t, n]) => `${n} ${t}`).join(' · ')}</span><span class="hint">Right-click to move · right-click native lands to subdue them · Shift-drag to box-select · Esc clears</span>`;
+  const mine = units.filter(u => u.nation === G.sim.s.player && !u.move);
+  if (mine.length >= 2) bar.insertAdjacentHTML('beforeend', `<span class="split">Split <button class="btn sm" data-split="2" title="Two even detachments">½</button><button class="btn sm" data-split="3" title="Three even detachments">⅓</button><button class="btn sm" data-split="4" title="Four even detachments">¼</button></span>`);
+  const here = new Set(mine.map(u => u.loc));
+  if (mine.length && G.sim.s.units.some(u => u.nation === G.sim.s.player && !u.move && here.has(u.loc) && (u.det || 0) !== (mine[0].det || 0) && UNITS[u.type].domain !== 'air')) bar.insertAdjacentHTML('beforeend', '<button class="btn sm" data-merge="1" title="Rejoin all detachments on this tile">Merge</button>');
+  for (const b of bar.querySelectorAll('[data-split]')) b.onclick = () => splitSelection(+b.dataset.split);
+  bar.querySelector('[data-merge]')?.addEventListener('click', mergeHere);
   bar.classList.remove('hidden');
 }
 

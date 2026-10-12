@@ -40,7 +40,7 @@ console.log('terrain', JSON.stringify(terr));
 const depc = {}; for (const i of sim.landIdx) for (const d of sim.s.regions[i].dep) depc[d.r] = (depc[d.r] || 0) + 1;
 console.log('deposits', Object.entries(depc).sort((a, b) => b[1] - a[1]).map(([k, v]) => k + ':' + v).join(' '));
 let events = {};
-sim.on(e => { events[e.kind] = (events[e.kind] || 0) + 1; if (['age', 'wonder', 'formed', 'war', 'gov', 'rise', 'vassal', 'faith', 'terror'].includes(e.kind) && (e.major || e.kind !== 'gov')) console.log(`   [${yearStr(e.y)}] ${e.text}`); });
+sim.on(e => { events[e.kind] = (events[e.kind] || 0) + 1; if (['age', 'wonder', 'formed', 'war', 'gov', 'rise', 'vassal', 'faith', 'terror', 'disaster'].includes(e.kind) && (e.major || e.kind !== 'gov')) console.log(`   [${yearStr(e.y)}] ${e.text}`); });
 const show = d => {
   const N = Object.values(sim.s.nations).filter(n => n.alive);
   const ages = {}; for (const n of N) ages[n.age] = (ages[n.age] || 0) + 1;
@@ -81,4 +81,11 @@ console.log('vassals at war under license:', lic);
   const rev = s.regions.filter(r => r.revolt);
   const alive = Object.values(s.nations).filter(n => n.alive);
   console.log('revolts now', rev.length, '| governors', alive.reduce((a, n) => a + Object.keys(n.governors || {}).length, 0), '| mayors', s.regions.filter(r => r.mayor).length, '| chars', Object.keys(s.chars).length, '| avg unrest', (alive.reduce((a, n) => a + (n.st.unrestW || 0), 0) / alive.length).toFixed(3));
+}
+// ---- pressure and crises
+{
+  const s = sim.s, alive = Object.values(s.nations).filter(n => n.alive);
+  const over = alive.filter(n => (n.adminOver || 0) > 0);
+  console.log('overextended', over.length, '/', alive.length, '| max over', Math.max(0, ...alive.map(n => n.adminOver || 0)), '| infamous (>12)', alive.filter(n => (n.infamy || 0) > 12).map(n => n.name + ' ' + Math.round(n.infamy)).join(', '));
+  console.log('coalitions', (s.coalitions || []).map(C => `vs ${sim.nm(C.target)}: ${C.members.length} members`).join('; ') || 'none', '| crises', (s.crises || []).map(C => C.name).join(', ') || 'none', '| plague', s.plague ? s.plague.name + ' ' + Object.keys(s.plague.inf).length + ' lands' : 'none');
 }

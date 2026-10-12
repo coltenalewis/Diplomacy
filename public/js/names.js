@@ -82,7 +82,8 @@ export function civName(culture, r = Math.random, used = new Set()) {
     else base = pick(C.on, r) + (r() < 0.45 ? pick(C.on, r) : '') + pick(C.end, r);
     base = base.replace(/(.)\1\1+/g, '$1$1');
     if (base.length < 3 || base.length > 11) continue;
-    const name = cap(base);
+    let name = cap(base);
+    if (used.has(name) && C.mono) name = pick(['Later', 'Northern', 'Southern', 'Eastern', 'Western', 'Former', 'Great', 'Little'], r) + ' ' + name; // Later Han, Northern Wei
     if (used.has(name)) continue;
     used.add(name);
     let adj = name;
@@ -92,7 +93,9 @@ export function civName(culture, r = Math.random, used = new Set()) {
     }
     return { name, adj };
   }
-  return { name: 'Tribe ' + Math.floor(r() * 999), adj: 'Tribal' };
+  // every name of this people is taken: borrow the sounds of another
+  const others = Object.keys(CULTURES).filter(k => k !== culture && !CULTURES[k].mono);
+  return used.size < 5000 ? civName(others[Math.floor(r() * others.length)], r, used) : { name: 'Tribe ' + Math.floor(r() * 999), adj: 'Tribal' };
 }
 
 const EPITHETS = ['the Bold', 'the Wise', 'the Elder', 'the Tall', 'Ironhand', 'the Builder', 'the Just', 'the Fierce', 'the Patient', 'Swiftfoot', 'the Red', 'the Silent', 'Stormborn', 'the Pious', 'the Great', 'the Young', 'the Lame', 'the Lion'];

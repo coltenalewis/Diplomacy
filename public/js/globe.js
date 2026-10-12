@@ -29,12 +29,30 @@ varying vec2 vUv; varying vec3 vN; varying vec3 vP;
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 // sine-free hash: stays well distributed for the large cell coordinates used by settlement lights
 float hash2(vec2 p) { vec3 q = fract(vec3(p.xyx) * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
-vec4 regionPal(vec2 uv, float row) {
-  vec4 ix = texture2D(idxTex, uv);
-  float id = floor(ix.r * 255.0 + 0.5) + floor(ix.g * 255.0 + 0.5) * 256.0;
-  if (id < 0.5) return vec4(0.0);
-  return texture2D(palTex, vec2((id - 0.5) / 4096.0, row));
+// The region at a point, voted from the four nearest grid cells by bilinear weight. Boundaries become smooth curves
+// at every zoom level instead of the grid's square steps.
+uniform vec2 idxSize;
+float idAt(vec2 t) { vec4 ix = texture2D(idxTex, t); return floor(ix.r * 255.0 + 0.5) + floor(ix.g * 255.0 + 0.5) * 256.0; }
+float regionId(vec2 uv) {
+  vec2 p = uv * idxSize - 0.5, b = floor(p), f = p - b;
+  vec2 t0 = (b + 0.5) / idxSize, dx = vec2(1.0 / idxSize.x, 0.0), dy = vec2(0.0, 1.0 / idxSize.y);
+  float a = idAt(t0), c = idAt(t0 + dx), d = idAt(t0 + dy), e = idAt(t0 + dx + dy);
+  if (a == c && a == d && a == e) return a;
+  float wa = (1.0 - f.x) * (1.0 - f.y), wc = f.x * (1.0 - f.y), wd = (1.0 - f.x) * f.y, we = f.x * f.y;
+  float sa = wa + (c == a ? wc : 0.0) + (d == a ? wd : 0.0) + (e == a ? we : 0.0);
+  float sc = wc + (a == c ? wa : 0.0) + (d == c ? wd : 0.0) + (e == c ? we : 0.0);
+  float sd = wd + (a == d ? wa : 0.0) + (c == d ? wc : 0.0) + (e == d ? we : 0.0);
+  float se = we + (a == e ? wa : 0.0) + (c == e ? wc : 0.0) + (d == e ? wd : 0.0);
+  float id = a, best = sa;
+  if (sc > best) { best = sc; id = c; }
+  if (sd > best) { best = sd; id = d; }
+  if (se > best) { id = e; }
+  return id;
 }
+vec4 palOf(float id, float row) { if (id < 0.5) return vec4(0.0); return texture2D(palTex, vec2((id - 0.5) / 4096.0, row)); }
+vec4 regionPal(vec2 uv, float row) { return palOf(regionId(uv), row); }
+// cheap nearest-cell lookup for the border-band probes
+vec4 regionPalN(vec2 uv, float row) { return palOf(idAt(uv), row); }
 void main() {
   vec3 n = normalize(vN);
   float water = texture2D(waterTex, vUv).r;
@@ -58,7 +76,8 @@ void main() {
   float shadow = cs.a * max(cs.r, cs.g);
   dayCol *= 1.0 - shadow * 0.32 * cloudAmt;
   // night: city lights driven by the simulation
-  vec4 pal = regionPal(vUv, 0.25), pal2 = regionPal(vUv, 0.75);
+  float rid = regionId(vUv);
+  vec4 pal = palOf(rid, 0.25), pal2 = palOf(rid, 0.75);
   float lightMul = pal2.r * 2.0;
   float elec = clamp(lightMul, 0.0, 1.0);
   vec3 night = texture2D(nightTex, vUv).rgb;
@@ -96,7 +115,7 @@ void main() {
       float a = float(k) * 0.7853982;
       vec2 d = vec2(cos(a), sin(a));
       vec4 q1 = regionPal(vUv + d * tx * 1.6, 0.25);
-      vec4 q2 = regionPal(vUv + d * tx * 3.6, 0.25);
+      vec4 q2 = regionPalN(vUv + d * tx * 3.6, 0.25);
       edge += (distance(q1.rgb, pal.rgb) > 0.02 ? 1.0 : 0.0) + (distance(q2.rgb, pal.rgb) > 0.02 ? 0.5 : 0.0);
     }
     edge = clamp(edge / 6.0, 0.0, 1.0);
@@ -161,7 +180,7 @@ export class Globe {
     this.camera.position.set(0, 0.8, 3.0);
     const c = this.controls = new OrbitControls(this.camera, renderer.domElement);
     c.enableDamping = true; c.dampingFactor = 0.07; c.enablePan = false;
-    c.minDistance = 1.1; c.maxDistance = 6; c.zoomSpeed = 0.7;
+    c.minDistance = 1.045; c.maxDistance = 6; c.zoomSpeed = 0.7;
     c.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: null };
     this.composer = new EffectComposer(renderer);
     this.composer.setPixelRatio(renderer.getPixelRatio());
@@ -180,7 +199,9 @@ export class Globe {
     const L = new THREE.TextureLoader();
     const maxAniso = this.renderer.capabilities.getMaxAnisotropy();
     const get = url => new Promise((res, rej) => L.load(url, t => { t.colorSpace = THREE.NoColorSpace; t.anisotropy = maxAniso; t.wrapS = THREE.RepeatWrapping; res(t); }, undefined, rej));
-    const [day, night, water, topo, sky] = await Promise.all(['earth-blue-marble.jpg', 'earth-night.jpg', 'earth-water.png', 'earth-topology.png', 'night-sky.png'].map(f => get('textures/' + f)));
+    const big = this.renderer.capabilities.maxTextureSize >= 8192;
+    const files = [big ? 'earth-day-8k.jpg' : 'earth-blue-marble.jpg', big ? 'earth-night-8k.jpg' : 'earth-night.jpg', 'earth-water.png', 'earth-topology.png', 'night-sky.png'];
+    const [day, night, water, topo, sky] = await Promise.all(files.map((f, k) => get('textures/' + f).catch(e => k < 2 && big ? get('textures/' + ['earth-blue-marble.jpg', 'earth-night.jpg'][k]) : Promise.reject(e))));
     const u = this.earth.material.uniforms;
     u.dayTex.value = day; u.nightTex.value = night; u.waterTex.value = water; u.topoTex.value = topo;
     this._nightImg = night.image; this._waterImg = water.image;
@@ -250,7 +271,7 @@ export class Globe {
     const mat = new THREE.ShaderMaterial({
       vertexShader: EARTH_VS, fragmentShader: EARTH_FS,
       uniforms: { dayTex: { value: blank }, nightTex: { value: blank }, waterTex: { value: blank }, topoTex: { value: blank }, cloudTex: { value: blank }, priorTex: { value: blank },
-        idxTex: { value: idxTex }, palTex: { value: palTex }, scarTex: { value: this.scarTex }, sunDir, cloudShift, cloudAmt, time: { value: 0 }, overlay: { value: 1 } },
+        idxTex: { value: idxTex }, idxSize: { value: new THREE.Vector2(idxTex.image.width, idxTex.image.height) }, palTex: { value: palTex }, scarTex: { value: this.scarTex }, sunDir, cloudShift, cloudAmt, time: { value: 0 }, overlay: { value: 1 } },
     });
     this.earth = new THREE.Mesh(new THREE.SphereGeometry(1, 256, 160), mat);
     scene.add(this.earth);
@@ -276,32 +297,75 @@ export class Globe {
   }
 
   // region index texture: which region each pixel of the globe belongs to
+  // Upsampled 4x: each fine pixel takes the region with the greatest bilinear weight among the four nearest grid
+  // cells, which turns the grid's stair steps into smooth diagonal edges.
   makeIdxTex() {
-    const w = this.world, TW = 1440, TH = 720;
-    const idx = new Uint8Array(TW * TH * 4);
+    const w = this.world, S = 1, TW = 360 * w.R * S, TH = 180 * w.R * S, G = w.grid, GW = w.W, GH = w.H, R = w.R;
+    const idx = new Uint8Array(TW * TH * 2);
+    const cell = (i, j) => { if (j < 0 || j >= GH) return -1; i %= GW; if (i < 0) i += GW; return i < GW ? G[j * GW + i] : -1; };
+    const ids = [0, 0, 0, 0], ws = [0, 0, 0, 0];
     for (let k = 0; k < TH; k++) {
-      const lat = -90 + (k + 0.5) * 180 / TH;
+      const lat = -90 + (k + 0.5) * 180 / TH, gy = (w.latN - lat) * R - 0.5;
+      if (gy < -1 || gy > GH) continue;
+      const j0 = Math.floor(gy), fy = gy - j0;
       for (let i = 0; i < TW; i++) {
         const lon = -180 + (i + 0.5) * 360 / TW;
-        const l = lat > w.latN || lat < w.latN - w.H / w.R ? -1 : w.regionAtLL(lat, lon);
-        const v = l + 1; const p = (k * TW + i) * 4;
-        idx[p] = v & 255; idx[p + 1] = v >> 8; idx[p + 3] = 255;
+        let gx = (lon - w.lon0) * R - 0.5; if (gx < 0) gx += 360 * R;
+        const i0 = Math.floor(gx), fx = gx - i0;
+        ids[0] = cell(i0, j0); ids[1] = cell(i0 + 1, j0); ids[2] = cell(i0, j0 + 1); ids[3] = cell(i0 + 1, j0 + 1);
+        ws[0] = (1 - fx) * (1 - fy); ws[1] = fx * (1 - fy); ws[2] = (1 - fx) * fy; ws[3] = fx * fy;
+        let best = ids[0], bw = -1;
+        if (ids[0] !== ids[1] || ids[0] !== ids[2] || ids[0] !== ids[3]) for (let a = 0; a < 4; a++) { let t = 0; for (let b = 0; b < 4; b++) if (ids[b] === ids[a]) t += ws[b]; if (t > bw) { bw = t; best = ids[a]; } }
+        const v = best + 1, p = (k * TW + i) * 2;
+        idx[p] = v & 255; idx[p + 1] = v >> 8;
       }
     }
-    const idxTex = new THREE.DataTexture(idx, TW, TH, THREE.RGBAFormat);
+    const idxTex = new THREE.DataTexture(idx, TW, TH, THREE.RGFormat);
+    idxTex.unpackAlignment = 2;
     idxTex.magFilter = idxTex.minFilter = THREE.NearestFilter; idxTex.wrapS = THREE.RepeatWrapping; idxTex.needsUpdate = true;
     return idxTex;
   }
+  // Border chains follow the 0.25 degree grid; smooth them so borders read as natural curves, not stair steps.
+  smoothChains() {
+    const GW = this.world.W;
+    const sm = ch => {
+      const n = (ch.length - 2) / 2; if (n < 3) return ch;
+      let X = [], Y = [];
+      for (let k = 0; k < n; k++) { X.push(ch[2 + 2 * k]); Y.push(ch[3 + 2 * k]); }
+      const closed = X[0] === X[n - 1] && Y[0] === Y[n - 1];
+      const jump = (a, b) => Math.abs(X[a] - X[b]) > GW / 4;
+      for (let pass = 0; pass < 3; pass++) {
+        const nx = X.slice(), ny = Y.slice();
+        for (let k = 0; k < n; k++) {
+          let a = k - 1, b = k + 1;
+          if (closed) { if (a < 0) a = n - 2; if (b > n - 1) b = 1; } else if (a < 0 || b > n - 1) continue;
+          if (jump(a, k) || jump(b, k)) continue;
+          nx[k] = X[a] * 0.25 + X[k] * 0.5 + X[b] * 0.25; ny[k] = Y[a] * 0.25 + Y[k] * 0.5 + Y[b] * 0.25;
+        }
+        X = nx; Y = ny;
+      }
+      const out = [ch[0], ch[1], X[0], Y[0]];
+      for (let k = 0; k + 1 < n; k++) {
+        if (jump(k, k + 1)) { out.push(X[k + 1], Y[k + 1]); continue; }
+        out.push(X[k] * 0.75 + X[k + 1] * 0.25, Y[k] * 0.75 + Y[k + 1] * 0.25, X[k] * 0.25 + X[k + 1] * 0.75, Y[k] * 0.25 + Y[k + 1] * 0.75);
+      }
+      out.push(X[n - 1], Y[n - 1]);
+      return out;
+    };
+    this.landChains = this.json.landChains.map(sm);
+    this.seaChains = this.json.seaChains.map(sm);
+  }
   // coasts, region borders, province borders and sea-zone borders
   buildMapLines() {
+    this.smoothChains();
     const scene = this.scene;
     for (const k of ['coast', 'regionBorders', 'provinceBorders', 'seaBorders']) if (this[k]) { scene.remove(this[k]); this[k].geometry.dispose(); this[k].material.dispose(); }
     this.coast = this.fatLines(this.pathToSegs(this.json.landPath, 1.0012), null, 0xbfefff, 1.1, 0.42);
     scene.add(this.coast);
     const rb = [], pb = [], sb = [];
     const R = this.world.regions;
-    for (const ch of this.json.landChains) { this.chainSegs(ch, rb, 1.0013); const a = R[ch[0]], b = R[ch[1]]; if (a && b && a.parent && b.parent && a.parent !== b.parent) this.chainSegs(ch, pb, 1.00135); }
-    for (const ch of this.json.seaChains) this.chainSegs(ch, sb, 1.0011);
+    for (const ch of this.landChains) { this.chainSegs(ch, rb, 1.0013); const a = R[ch[0]], b = R[ch[1]]; if (a && b && a.parent && b.parent && a.parent !== b.parent) this.chainSegs(ch, pb, 1.00135); }
+    for (const ch of this.seaChains) this.chainSegs(ch, sb, 1.0011);
     this.regionBorders = this.thinLines(rb, 0xf4ead2, 0.18); scene.add(this.regionBorders);
     this.provinceBorders = this.thinLines(pb, 0xffe7b0, 0.3); scene.add(this.provinceBorders);
     this.seaBorders = this.thinLines(sb, 0x8fd3ff, 0.07); scene.add(this.seaBorders);
@@ -310,7 +374,7 @@ export class Globe {
   setWorld(world, json) {
     this.world = world; this.json = json;
     const u = this.earth.material.uniforms;
-    u.idxTex.value.dispose(); u.idxTex.value = this.makeIdxTex();
+    u.idxTex.value.dispose(); u.idxTex.value = this.makeIdxTex(); u.idxSize.value.set(u.idxTex.value.image.width, u.idxTex.value.image.height);
     this.pal.fill(0); this.palTex.needsUpdate = true;
     this.buildMapLines();
     for (const ch of [...this.nationGroup.children]) this.dropLine(this.nationGroup, ch);
@@ -361,7 +425,7 @@ export class Globe {
     const band = [], bandCol = [], core = [];
     const OFF = 0.42, R = 1.0017;
     const hex = c => { const v = parseInt((c || '#888888').slice(1), 16); return [(v >> 16) / 255, ((v >> 8) & 255) / 255, (v & 255) / 255]; };
-    for (const ch of this.json.landChains) {
+    for (const ch of this.landChains) {
       const a = owners[ch[0]], b = owners[ch[1]];
       if (a === b) continue;
       const ca = a ? hex(colorOf(a)) : null, cb = b ? hex(colorOf(b)) : null;

@@ -3,6 +3,8 @@
 // grow settlements, research through ten ages, and fight with units that have physical positions.
 import { AGES, NAGES, ageScale, YEARS_PER_DAY } from './eras.js';
 import { TERRAIN, RES, IMPROVEMENTS, IMP_ORDER, IMP_CAP, LABOR, STRATEGIC, LUXURIES, classify, generateDeposits, rng, known } from './resources.js';
+import { pressureDaily, onAcquire, addInfamy } from './pressure.js';
+import { crisesDaily, applyScenario } from './crises.js';
 import { initSociety, buildProvinces, onNewNation, onSettled, onTransfer, societyDaily, fundInsurgents } from './society.js';
 import { UNITS, LINES, VARIANTS, bestOf, SETTLEMENTS, BUILDINGS, WONDERS, FOOD_PER_K } from './units.js';
 import { TECH, TECHS, available, ageProgress, ADVANCE_SHARE, techsBefore, AGE_TECHS } from './tech.js';
@@ -60,7 +62,7 @@ export class Sim {
   migrate() {
     const s = this.s;
     s.chars ||= {}; s.groups ||= []; s.scars ||= []; s.sanctions ||= []; s.guarantees ||= []; s.wonders ||= {}; s.formed ||= {};
-    s.movements ||= [];
+    s.movements ||= []; s.coalitions ||= []; s.crises ||= []; s.crisisRate ??= 1;
     s.maxCivs = Math.max(s.maxCivs || 0, 200); s.emergence ??= true; s.nextEmerge ??= s.t + 24 * 3;
     for (const u of s.units) { if (!UNITS[u.type]) { u.dead = true; continue; } u.mhp ||= UNITS[u.type].hp; if (!u.pos) this.placeUnit(u, true); }
     s.units = s.units.filter(u => !u.dead);
@@ -131,6 +133,7 @@ export class Sim {
       N.food = 6 * sc; N.wood = 6 * sc; N.stone = 3 * sc; N.metal = startAge ? 4 * sc : 0; N.wealth = startAge ? 6 * sc : 0;
       this.seedForces(N);
     }
+    applyScenario(this, opts.scenario);
     refreshCandidates(s, s.nations[s.player]);
     this.updateContacts();
     return s;
@@ -619,15 +622,17 @@ export class Sim {
     r.pop = (r.natives || 0) * 0.6; r.natives = 0; r.lvl = Math.max(r.lvl, 1); r.unrest = 0.5;
     this.owned.get(c).add(r.i);
     onSettled(this, r, N, true);
+    onAcquire(this, r, c, 'subdue');
     N.subjugate = (N.subjugate || []).filter(i => i !== r.i);
     this.emit('capture', `The ${this.nm(c)} subdue the native peoples of ${this.w.regions[r.i].name}.`, [c], { loc: r.i });
   }
-  transfer(r, to, peaceful = false) {
+  transfer(r, to, peaceful = false, how = null) {
     const s = this.s, w = this.w;
     const from = r.owner;
     r.owner = to; r.capture = null; r.claim = null;
     this.owned.get(from)?.delete(r.i); this.owned.get(to)?.add(r.i);
     onTransfer(this, r);
+    onAcquire(this, r, to, how || (peaceful ? 'cede' : 'conquest'));
     if (!peaceful) { r.bld.walls = Math.max(0, (r.bld.walls || 0) - 1); r.damage = clamp(r.damage + 0.25, 0, 0.8); r.pop *= 0.92; r.unrest = clamp(r.unrest + 0.5, 0, 1); }
     if (r.build && r.build.kind !== 'wonder') r.build = null;
     if (r.build?.kind === 'wonder') { r.build = null; }
@@ -683,7 +688,7 @@ export class Sim {
   claimCost(c, i) {
     const N = this.s.nations[c], r = this.s.regions[i], m = N.mods || {};
     const n = this.owned.get(c)?.size || 1;
-    const k = Math.pow(ageScale(N.age), 0.8) * (1 + 0.035 * n) * Math.max(0.3, 1 + (m.claimCost || 0)) * (1 + Math.min(2, (r.natives || 0) * 0.35));
+    const k = Math.pow(ageScale(N.age), 0.8) * (1 + 0.035 * n) * (1 + 0.06 * (N.expHeat || 0)) * Math.max(0.3, 1 + (m.claimCost || 0)) * (1 + Math.min(2, (r.natives || 0) * 0.35));
     const cost = { food: +(4 * k).toFixed(1), wood: +(2 * k).toFixed(1) };
     if (N.age >= 1) cost.wealth = +(2.5 * k).toFixed(1);
     const settlers = +(0.35 * Math.pow(1.5, N.age)).toFixed(2);
@@ -734,6 +739,7 @@ export class Sim {
     r.owner = r.core = c; r.lvl = 1; r.pop = (r.claim.settlers || 0.3) + (r.natives || 0) * 0.85; r.natives = 0; r.unrest = r.pop > 1.5 ? 0.15 : 0;
     r.claim = null; this.owned.get(c).add(r.i);
     onSettled(this, r, N, natives);
+    onAcquire(this, r, c, 'settle');
     for (const x of this.s.regions) if (x.claim && x.i === r.i) x.claim = null;
     if (c === this.s.player) this.emit('claim', `Settlers found a new camp at ${this.w.regions[r.i].name}.`, [c], { loc: r.i });
   }
@@ -1048,7 +1054,9 @@ export class Sim {
       if (!N?.alive || r.owner) { r.claim = null; continue; }
       if (--r.claim.left <= 0) this.completeClaim(r);
     }
+    pressureDaily(this);
     societyDaily(this);
+    crisesDaily(this);
     // native peoples grow slowly
     if (s.t % (24 * 5) === 0) for (const i of this.landIdx) { const r = s.regions[i]; if (!r.owner) { const cap = 2.2 * this.T[i].hab * (this.T[i].river ? 1.4 : 1); r.natives = Math.min(cap, (r.natives || 0) + 0.02 * cap); } }
     this.emergence();
@@ -1352,6 +1360,7 @@ export class Sim {
     const prev = this.rel(a, b);
     this.setRel(a, b, 'war');
     this.addOpinion(b, a, -60);
+    if (!quiet) addInfamy(this, a, 1); // wars of choice are remembered
     for (const c of this.s.nations[b].known || []) if (c !== a && c !== b) this.addOpinion(c, a, prev === 'alliance' || prev === 'nap' ? -20 : -5);
     this.s.trades = this.s.trades.filter(t => !((t.from === a && t.to === b) || (t.from === b && t.to === a)));
     if (!quiet) this.emit('war', `The ${this.nm(a)} declare war on the ${this.nm(b)}${prev === 'nap' || prev === 'alliance' ? ', breaking their treaty' : ''}.`, [a, b], { loc: this.s.nations[b].capital });

@@ -444,3 +444,7 @@ table.stocks td { padding: 4px; border-top: 1px solid var(--line); }
 .lens-legend .lg-row { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
 .log-item.faith { border-left-color: #b98cff; }
 .log-item.unrest, .log-item.terror { border-left-color: #ff6b4a; }
+
+.selbar .split { display: inline-flex; gap: 4px; align-items: center; color: var(--muted); font-size: 12px; }
+.selbar .split .btn { min-width: 30px; }
+.log-item.disaster { border-left-color: #ffb547; }

@@ -219,6 +219,8 @@ export function computeMods(s, N) {
   for (const [id, owner] of Object.entries(s.wonders || {})) if (owner === N.code) addFx(m, WONDERS[id].fx);
   if (N.formed?.fx) addFx(m, N.formed.fx);
   if (N.soc) addFx(m, N.soc); // holy cities and pilgrims
+  if (N.pfx) addFx(m, N.pfx); // corruption in an overstretched state
+  if (N.cfx) addFx(m, N.cfx); // world crises
   // luxuries: each distinct luxury the people enjoy lifts spirits
   const lux = N.luxCount || 0;
   m.approval += Math.min(0.15, lux * 0.012); m.stability += Math.min(0.006, lux * 0.0006);
@@ -257,8 +259,8 @@ export function politicsDaily(sim, N) {
   target -= N.exhaustion * (G.democratic ? 0.5 : 0.25);
   if (wars && N.exhaustion < 0.1) target += 0.04; // rally round the flag
   // an empire too large for its institutions grows restless
-  const over = Math.max(0, st.tiles - (6 + N.age * 5 + (m.claimCost < 0 ? 4 : 0)));
-  target -= Math.min(0.2, over * 0.006);
+  const over = N.adminOver ?? Math.max(0, st.tiles - (6 + N.age * 5));
+  target -= Math.min(0.22, over * 0.008) + Math.min(0.1, Math.max(0, (N.expHeat || 0) - 6) * 0.008);
   g.approval = clamp(g.approval + (clamp(target, 0.05, 0.95) - g.approval) * 0.03, 0, 1);
   const unrest = st.unrestW || 0;
   const sTarget = (G.democratic ? 0.25 + 0.6 * g.approval : 0.45 + 0.3 * g.approval) + m.stability * 6 - unrest * 0.5;

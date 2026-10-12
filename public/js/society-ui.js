@@ -7,6 +7,7 @@ import {
   governorTitle, mayorTitle, cultureShares, faithShares, adoptFaith, missionCost, canMission, movementsOf, movementTiles, crackdown, concede, concessionCost,
   grantAutonomy, unrestCauses, societyContext, cultureName, faithName,
 } from './society.js';
+import { adminCap, heatLabel, infamyLabel, infamyLimit, coalitionAgainst, reachKm } from './pressure.js';
 
 const traitChips = c => c.traits.map(t => `<span class="trait ${['Corrupt', 'Ambitious'].includes(t) ? 'bad' : ''}" title="${esc(TRAITS[t]?.desc || '')}">${t}</span>`).join('');
 const MOV_LABEL = { separatist: 'Separatists', sectarian: 'Sectarian militants', revolutionary: 'Revolutionaries' };
@@ -36,7 +37,7 @@ export function tileSocietyHTML(i) {
     const ours = s.units.filter(u => u.loc === i && u.nation === r.owner && !u.move).length;
     h += `<div class="card" style="border-color:rgba(255,93,93,.55);margin-top:8px"><div class="warn-text">${REVOLT_NAME[r.revolt.kind]} · day ${Math.floor((s.t - r.revolt.since) / 24)}</div>
       <div class="grid2 small"><span>Rebel strength</span><span>${r.revolt.str.toFixed(1)}</span><span>Troops holding the town</span><span>${ours}</span></div>
-      <div class="small muted">${r.owner === P ? 'Station land units here to crush the revolt. Left alone for a month, it wins: the land breaks away or returns to its old rulers.' : ''}</div></div>`;
+      <div class="small muted">${r.owner === P ? 'Station land units here to crush the revolt. Left alone for about a month, it wins: the land breaks away or returns to its old rulers.' : ''}</div></div>`;
   } else if (O && (r.rev || 0) > 0.15) h += `<div class="small warn-text" style="margin-top:6px">Revolt brewing: ${pct(r.rev)}</div>`;
   if (O && O.code === P) {
     const { causes, target } = unrestCauses(sim, r, O, societyContext(sim, O));
@@ -59,8 +60,20 @@ export function renderSociety(host) {
     <div class="grid2" style="margin-top:6px"><span>Stability</span><span>${pct(N.gov.stability)}</span><span>Approval</span><span>${pct(N.gov.approval)}</span><span>Average unrest</span><span class="${(N.st.unrestW || 0) > 0.3 ? 'neg' : ''}">${pct(N.st.unrestW || 0)}</span><span>Revolts · movements</span><span class="${revolts.length ? 'neg' : ''}">${revolts.length} · ${movs.length}</span></div>`;
   if (F && F.kind !== 'folk' && F.holy != null) { const ho = s.regions[F.holy]?.owner; h += `<div class="small" style="margin-top:6px">Holy city: <b>${esc(G.world.regions[F.holy].name)}</b> ${ho === P ? '<span class="pos">(ours)</span>' : ho ? `<span class="warn-text">held by the ${esc(sim.nm(ho))}</span>` : '<span class="muted">(wilderness)</span>'}</div>`; }
   h += '</div>';
+  // the strain of empire
+  const cap = N.adminCap ?? adminCap(sim, N), held = sim.owned.get(P)?.size || 0, heat = N.expHeat || 0, inf = N.infamy || 0, lim = infamyLimit(sim, P);
+  const C2 = coalitionAgainst(sim, P);
+  h += `<div class="sec"><div class="sec-title">The strain of empire</div>
+    <div class="row"><span>Administration</span><span class="${held > cap ? 'neg' : ''}">${held} of ${cap} lands</span></div>${bar(held / Math.max(1, cap), held > cap ? 'var(--red)' : held > cap * 0.85 ? '#ffb547' : 'var(--teal)')}
+    <div class="small muted" style="margin-bottom:6px">${held > cap ? `<span class="warn-text">${held - cap} lands beyond what the state can govern:</span> unrest everywhere, lost revenue and research, falling approval. ` : ''}Capacity grows with laws, roads, bureaucracy, the form of government and every governor you appoint. Vassals do not count against it.</div>
+    <div class="row"><span>Pace of expansion</span><span class="${heat > 7 ? 'neg' : ''}">${heatLabel(heat)} (${heat.toFixed(1)})</span></div>${bar(heat / 16, heat > 13 ? 'var(--red)' : heat > 7 ? '#ffb547' : 'var(--teal)')}
+    <div class="small muted" style="margin-bottom:6px">Every land gained heats the realm; it cools over months. Above "calm", all lands grow restless and settlers cost more. Newly settled and conquered lands, and lands beyond ${Math.round(reachKm(N))} km of the capital, are restless too.</div>
+    <div class="row"><span>Infamy</span><span class="${inf > lim ? 'neg' : ''}">${infamyLabel(inf)} (${inf.toFixed(1)} / ${lim})</span></div>${bar(inf / (lim * 1.5), inf > lim ? 'var(--red)' : inf > lim * 0.6 ? '#ffb547' : 'var(--teal)')}
+    <div class="small muted">Conquest, ultimatums and wars of choice earn infamy. Past ${lim}, neighbours who fear you may form a coalition and attack together.</div>
+    ${C2 ? `<div class="card" style="border-color:rgba(255,93,93,.55);margin-top:8px"><div class="warn-text">Coalition against you${C2.members.some(m => sim.atWar(m, P)) ? ' · AT WAR' : ''}</div><div class="small">${C2.members.map(m => `<span class="click" data-dossier="${m}" style="color:${sim.col(m)}">${esc(sim.nm(m))}</span>`).join(', ')}</div><div class="small muted">Let your infamy cool, win them over with gifts and treaties, or break them in the field.</div></div>` : ''}
+  </div>`;
   // revolts first: they need troops now
-  if (revolts.length) h += `<div class="sec"><div class="sec-title">Revolts (${revolts.length})</div>${revolts.map(r => { const ours = s.units.filter(u => u.loc === r.i && u.nation === P && !u.move).length; return `<div class="row click" data-goto="${r.i}"><span><span class="warn-text">${REVOLT_NAME[r.revolt.kind]}</span> · ${esc(G.world.regions[r.i].name)}<br><span class="small muted">rebels ${r.revolt.str.toFixed(1)} · our troops ${ours} · day ${Math.floor((s.t - r.revolt.since) / 24)} of ~25</span></span><span class="small">Send troops ›</span></div>`; }).join('')}</div>`;
+  if (revolts.length) h += `<div class="sec"><div class="sec-title">Revolts (${revolts.length})</div>${revolts.map(r => { const ours = s.units.filter(u => u.loc === r.i && u.nation === P && !u.move).length; return `<div class="row click" data-goto="${r.i}"><span><span class="warn-text">${REVOLT_NAME[r.revolt.kind]}</span> · ${esc(G.world.regions[r.i].name)}<br><span class="small muted">rebels ${r.revolt.str.toFixed(1)} · our troops ${ours} · day ${Math.floor((s.t - r.revolt.since) / 24)} of ~30</span></span><span class="small">Send troops ›</span></div>`; }).join('')}</div>`;
   // movements
   h += `<div class="sec"><div class="sec-title">Movements (${movs.length})</div>`;
   if (!movs.length) h += '<div class="muted small">No organized opposition. Restless minorities, other faiths and unpopular rule breed separatists, sectarian militants and revolutionaries.</div>';
