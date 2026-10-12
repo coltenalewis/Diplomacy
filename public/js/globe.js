@@ -1,4 +1,4 @@
-// 3D Earth: relief-shaded day side, simulated city lights, clouds, painted territories and borders, bloom.
+// 3D Earth: raised relief, animated surf and sun glint on the seas, relief-shaded day side, simulated city lights, clouds, painted territories and borders, bloom.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
@@ -22,13 +22,31 @@ void main() {
   vUv = uv; vN = normalize(mat3(modelMatrix) * normal); vP = (modelMatrix * vec4(position, 1.0)).xyz;
   gl_Position = projectionMatrix * viewMatrix * vec4(vP, 1.0);
 }`;
+// The ground itself: land is lifted along the normal by the elevation map (exaggerated so mountains read from orbit).
+// Depth is written as if the vertex still sat on the smooth sphere, so borders, units and routes floating just above
+// radius 1 are never swallowed by the mountains they cross.
+const TERRAIN_VS = `
+uniform sampler2D topoTex; uniform float relief;
+varying vec2 vUv; varying vec3 vN; varying vec3 vP;
+void main() {
+  vUv = uv; vN = normalize(mat3(modelMatrix) * normal);
+  vec3 base = (modelMatrix * vec4(position, 1.0)).xyz;
+  vP = base + vN * pow(texture2D(topoTex, uv).r, 0.85) * relief;
+  vec4 clip = projectionMatrix * viewMatrix * vec4(vP, 1.0), smooth0 = projectionMatrix * viewMatrix * vec4(base, 1.0);
+  clip.z = smooth0.z / smooth0.w * clip.w;
+  gl_Position = clip;
+}`;
 const EARTH_FS = `
-uniform sampler2D dayTex, nightTex, waterTex, topoTex, cloudTex, idxTex, palTex, scarTex, priorTex;
+uniform sampler2D dayTex, nightTex, waterTex, topoTex, coastTex, cloudTex, idxTex, palTex, scarTex, priorTex;
 uniform vec3 sunDir; uniform float time; uniform float overlay; uniform float cloudShift; uniform float cloudAmt;
 varying vec2 vUv; varying vec3 vN; varying vec3 vP;
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 // sine-free hash: stays well distributed for the large cell coordinates used by settlement lights
 float hash2(vec2 p) { vec3 q = fract(vec3(p.xyx) * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
+float vnoise(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash2(i), hash2(i + vec2(1.0, 0.0)), f.x), mix(hash2(i + vec2(0.0, 1.0)), hash2(i + vec2(1.0, 1.0)), f.x), f.y); }
+// rolling swell for the sun glint: two noise layers drifting against each other
+float swell(vec2 p, float t) { return vnoise(p + vec2(t * 0.6, t * 0.35)) + 0.5 * vnoise(p * 2.3 - vec2(t * 0.5, -t * 0.4)); }
 // The region at a point, voted from the four nearest grid cells by bilinear weight. Boundaries become smooth curves
 // at every zoom level instead of the grid's square steps.
 uniform vec2 idxSize;
@@ -62,7 +80,7 @@ void main() {
   float hD = texture2D(topoTex, vUv - vec2(0.0, px.y)).r, hU = texture2D(topoTex, vUv + vec2(0.0, px.y)).r;
   vec3 east = normalize(cross(vec3(0.0, 1.0, 0.0), n) + vec3(1e-5));
   vec3 north = cross(n, east);
-  vec3 nr = normalize(n - (east * (hR - hL) + north * (hU - hD)) * 3.2 * (1.0 - water));
+  vec3 nr = normalize(n - (east * (hR - hL) + north * (hU - hD)) * 4.2 * (1.0 - water));
   float ndl = dot(n, sunDir);
   float ndlR = dot(nr, sunDir);
   float dayMix = smoothstep(-0.14, 0.2, ndl);
@@ -103,6 +121,35 @@ void main() {
   lights += sc * (settle * 1.7 + haze) * flick;
   vec3 moon = day * vec3(0.18, 0.24, 0.36) * 0.22;
   vec3 col = mix(lights * (1.0 - shadow * 0.5 * cloudAmt) + moon, dayCol, dayMix);
+  // seas: shallows near the shore, surf rolling in to the coast, foam on the beaches, glittering sun glint
+  vec3 v = normalize(cameraPosition - vP);
+  vec3 h = normalize(sunDir + v);
+  float cv = texture2D(coastTex, vUv).r;
+  float sea = smoothstep(0.004, 0.03, cv);
+  if (sea > 0.0) {
+    float cd = clamp((cv * 255.0 - 8.0) / 247.0, 0.0, 1.0); // 0 at the shore, 1 well offshore
+    vec2 wq = vUv * vec2(2048.0, 1024.0);
+    float lit = 0.12 + 0.88 * dayMix;
+    col = mix(col, col * vec3(0.72, 1.08, 1.1) + vec3(0.0, 0.025, 0.03) * dayMix, pow(1.0 - cd, 3.0) * sea * 0.55);
+    // crests travel toward the shore (phase constant where cd shrinks over time), broken up along the coast
+    float wph = cd * 52.0 + time * 1.3 + (vnoise(wq * 0.06) - 0.5) * 9.0;
+    float crest = pow(0.5 + 0.5 * sin(wph), 10.0);
+    float dense = 1.0 - smoothstep(0.4, 1.4, fwidth(wph)); // fade before the bands get too fine to draw
+    float patchy = smoothstep(0.35, 0.8, vnoise(wq * 0.25 + vec2(time * 0.07, 0.0)) * 0.7 + vnoise(wq * 0.9 - time * 0.1) * 0.3 + 0.12);
+    float waves = crest * (1.0 - smoothstep(0.05, 0.4, cd)) * dense * patchy;
+    // foam: a thin breaking line that surges up the beach as each wave lands
+    float surge = 0.5 + 0.5 * sin(time * 1.3 + (vnoise(wq * 0.06) - 0.5) * 9.0);
+    float foam = (1.0 - smoothstep(0.0, 0.02 + 0.025 * surge, cd)) * (0.5 + 0.5 * vnoise(wq * 1.5 + time * 0.3));
+    foam *= 1.0 - smoothstep(0.03, 0.12, fwidth(cd));
+    col += vec3(0.86, 0.95, 1.0) * (waves * 0.16 + foam * 0.4) * sea * lit * (1.0 - shadow * 0.4 * cloudAmt);
+    // sun glint off a rippling surface
+    vec2 gq = wq * 3.5;
+    float g0 = swell(gq, time), gx = swell(gq + vec2(0.4, 0.0), time) - g0, gy = swell(gq + vec2(0.0, 0.4), time) - g0;
+    float ripple = 1.0 - smoothstep(0.4, 1.5, fwidth(gq.x));
+    vec3 nw = normalize(n - (east * gx + north * gy) * 0.12 * ripple);
+    float spec = pow(max(dot(nw, h), 0.0), 400.0) * 0.55 * ripple + pow(max(dot(n, h), 0.0), 90.0) * 0.12;
+    col += vec3(1.0, 0.93, 0.8) * spec * sea * dayMix * (1.0 - shadow * 0.7 * cloudAmt);
+  }
   // nuclear scars
   float scar = texture2D(scarTex, vUv).r;
   col = mix(col, vec3(0.16, 0.1, 0.06) * (0.3 + 0.7 * dayMix), scar * 0.75);
@@ -128,8 +175,6 @@ void main() {
   float stripes = step(0.5, fract((vUv.x * 2.0 + vUv.y) * 700.0));
   col = mix(col, vec3(1.0, 0.25, 0.22), pal2.a * stripes * (0.3 + 0.2 * sin(time * 4.0)));
   // ocean glint, fresnel, twilight band
-  vec3 v = normalize(cameraPosition - vP);
-  vec3 h = normalize(sunDir + v);
   col += vec3(1.0, 0.42, 0.12) * exp(-pow(ndl * 9.0, 2.0)) * 0.07;
   gl_FragColor = vec4(col, 1.0);
 }`;
@@ -206,8 +251,44 @@ export class Globe {
     u.dayTex.value = day; u.nightTex.value = night; u.waterTex.value = water; u.topoTex.value = topo;
     this._nightImg = night.image; this._waterImg = water.image;
     try { u.priorTex.value = this.buildPrior(night.image, water.image); } catch (e) { console.warn('settlement map', e); }
+    try { u.coastTex.value = this.buildCoast(water.image, big ? 4096 : 2048); } catch (e) { console.warn('coast map', e); }
     this.sky.material.map = sky; this.sky.material.needsUpdate = true;
     get('textures/clouds.png').then(cl => { u.cloudTex.value = cl; this.clouds.material.uniforms.cloudTex.value = cl; this.clouds.visible = true; }).catch(() => {});
+  }
+
+  // Distance from the shore across the seas, for the surf. 0 = land; water runs from 8/255 at the beach up to 1 about
+  // three degrees offshore. Two-pass chamfer distance on the upscaled water mask.
+  buildCoast(waterImg, W) {
+    const H = W / 2, CAP = W / 128;
+    const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+    const ctx = cv.getContext('2d', { willReadFrequently: true });
+    ctx.filter = `blur(${W / 1100}px)`; ctx.drawImage(waterImg, 0, 0, W, H); ctx.filter = 'none'; // round off the mask's pixel steps
+    const src = ctx.getImageData(0, 0, W, H).data;
+    const d = new Float32Array(W * H);
+    for (let i = 0; i < W * H; i++) d[i] = src[i * 4] > 127 ? 1e9 : 0;
+    const A = 1, B = Math.SQRT2;
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const i = y * W + x; let v = d[i]; if (!v) continue;
+      const l = x ? i - 1 : i + W - 1; // wrap across the date line
+      v = Math.min(v, d[l] + A);
+      if (y) { const u = i - W; v = Math.min(v, d[u] + A, d[x ? u - 1 : u + W - 1] + B, d[x < W - 1 ? u + 1 : u - W + 1] + B); }
+      d[i] = v;
+    }
+    for (let y = H - 1; y >= 0; y--) for (let x = W - 1; x >= 0; x--) {
+      const i = y * W + x; let v = d[i]; if (!v) continue;
+      const r = x < W - 1 ? i + 1 : i - W + 1;
+      v = Math.min(v, d[r] + A);
+      if (y < H - 1) { const b = i + W; v = Math.min(v, d[b] + A, d[x ? b - 1 : b + W - 1] + B, d[x < W - 1 ? b + 1 : b - W + 1] + B); }
+      d[i] = v;
+    }
+    const data = new Uint8Array(W * H);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const v = d[y * W + x];
+      data[(H - 1 - y) * W + x] = v ? Math.round(8 + 247 * Math.min(1, v / CAP)) : 0; // texture rows run from the south
+    }
+    const tex = new THREE.DataTexture(data, W, H, THREE.RedFormat);
+    tex.magFilter = tex.minFilter = THREE.LinearFilter; tex.wrapS = THREE.RepeatWrapping; tex.needsUpdate = true;
+    return tex;
   }
 
   // A map of where people naturally gather, used to place settlement lights: blurred real night-light cores,
@@ -269,11 +350,11 @@ export class Globe {
     const cloudShift = { value: 0 }, cloudAmt = { value: 0.5 };
     this.u = { sunDir, cloudShift, cloudAmt };
     const mat = new THREE.ShaderMaterial({
-      vertexShader: EARTH_VS, fragmentShader: EARTH_FS,
-      uniforms: { dayTex: { value: blank }, nightTex: { value: blank }, waterTex: { value: blank }, topoTex: { value: blank }, cloudTex: { value: blank }, priorTex: { value: blank },
+      vertexShader: TERRAIN_VS, fragmentShader: EARTH_FS,
+      uniforms: { relief: { value: 0.0065 }, dayTex: { value: blank }, nightTex: { value: blank }, waterTex: { value: blank }, topoTex: { value: blank }, coastTex: { value: blank }, cloudTex: { value: blank }, priorTex: { value: blank },
         idxTex: { value: idxTex }, idxSize: { value: new THREE.Vector2(idxTex.image.width, idxTex.image.height) }, palTex: { value: palTex }, scarTex: { value: this.scarTex }, sunDir, cloudShift, cloudAmt, time: { value: 0 }, overlay: { value: 1 } },
     });
-    this.earth = new THREE.Mesh(new THREE.SphereGeometry(1, 256, 160), mat);
+    this.earth = new THREE.Mesh(new THREE.SphereGeometry(1, 720, 360), mat);
     scene.add(this.earth);
     this.clouds = new THREE.Mesh(new THREE.SphereGeometry(1.006, 160, 100), new THREE.ShaderMaterial({ vertexShader: EARTH_VS, fragmentShader: CLOUD_FS,
       uniforms: { cloudTex: { value: blank }, sunDir, cloudShift, cloudAmt }, transparent: true, depthWrite: false }));
