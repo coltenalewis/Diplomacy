@@ -750,6 +750,7 @@ function bindChrome() {
   window.addEventListener('pointerup', () => { setTimeout(() => { G.pointerDown = false; }, 0); });
   for (const b of document.querySelectorAll('#speed button')) b.onclick = () => { setSpeed(+b.dataset.s); if (+b.dataset.s) G.prevSpeed = +b.dataset.s; };
   // delegated so a redraw of the bar between press and release never swallows the click
+  $('#res').addEventListener('wheel', e => { const el = e.currentTarget; if (el.scrollWidth <= el.clientWidth || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return; el.scrollLeft += e.deltaY; e.preventDefault(); }, { passive: false });
   $('#res').addEventListener('click', e => { if (!G.sim || !e.target.closest('[data-trades]')) return; switchTab('realm'); setTimeout(() => $('#trade-sec')?.scrollIntoView({ block: 'start' }), 30); });
   $('#btn-save').onclick = () => G.sim && save();
   $('#btn-cabinet').onclick = openCabinet;
