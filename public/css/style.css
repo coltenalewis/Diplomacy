@@ -75,7 +75,10 @@ button, input, select { font-family: inherit; color: inherit; font-size: inherit
 #labels, #markers, #icons { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
 .vignette { position: absolute; inset: 0; pointer-events: none; background: radial-gradient(ellipse at center, transparent 62%, rgba(0,0,0,.5) 100%); }
 .paused { position: absolute; top: 16px; left: 50%; transform: translateX(-50%); color: #1a1406; background: var(--gold); padding: 4px 16px; border-radius: 20px; font-weight: 700; font-size: 12.5px; letter-spacing: .6px; text-transform: uppercase; pointer-events: none; box-shadow: 0 4px 16px rgba(0,0,0,.4); }
-.boxsel { position: absolute; border: 1px solid var(--gold); background: rgba(233,196,106,.08); pointer-events: none; z-index: 6; }
+.boxsel { position: absolute; border: 1px solid var(--gold); background: rgba(233,196,106,.08); pointer-events: none; z-index: 6; border-radius: 2px; box-shadow: 0 0 0 1px rgba(0,0,0,.35), inset 0 0 18px rgba(233,196,106,.08); }
+.boxsel[data-n]:not([data-n=""])::after { content: attr(data-n); position: absolute; right: 0; bottom: -18px; font-size: 10.5px; font-weight: 700; color: var(--gold-2); text-shadow: 0 1px 3px #000; white-space: nowrap; }
+#stage.boxmode canvas { cursor: crosshair; }
+.tok.boxhit { opacity: 1; box-shadow: 0 0 0 1px var(--gold), 0 0 10px rgba(233,196,106,.55); }
 
 .lab { position: absolute; left: 0; top: 0; white-space: nowrap; pointer-events: none; will-change: transform; text-shadow: 0 1px 3px #000, 0 0 8px rgba(0,0,0,.8); }
 .lab.nation { font-weight: 700; letter-spacing: 2.5px; font-size: 13px; text-transform: uppercase; opacity: .9; }
