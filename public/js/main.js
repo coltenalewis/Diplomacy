@@ -329,7 +329,7 @@ function syncMarkerEls() {
     const html = `<i class="ic">${ICON[UNITS[st.main].sym] || ICON.inf}</i>${st.units.length > 1 ? `<b class="n">${st.units.length}</b>` : ''}${xs ? `<span class="xp">${xs}</span>` : ''}<span class="hp"><i style="width:${hp}%;background:${st.hp < 0.35 ? '#ff5d5d' : st.hp < 0.7 ? '#ffb547' : '#5ee39a'}"></i></span>`;
     if (el._h !== html) { el.innerHTML = html; el._h = html; }
     el.style.setProperty('--c', G.sim.col(st.nation));
-    const cls = `tok${st.nation === s.player ? ' mine' : ' small'}${st.sel ? ' sel' : ''}${st.moving ? ' moving' : ''}${st.fight ? ' fight' : ''}`;
+    const cls = `tok${st.nation === s.player ? ' mine' : ' small'}${st.sel ? ' sel' : ''}${st.moving ? ' moving' : ''}${st.fight ? ' fight' : ''}${G.boxHits && st.units.some(u => G.boxHits.has(u.id)) ? ' boxhit' : ''}`;
     if (el.className !== cls) el.className = cls;
     el._st = st;
     if (!el._bound) {
@@ -485,32 +485,63 @@ function showStackTip(st, el) {
 function bindInput() {
   const cv = G.globe.renderer.domElement;
   let down = null, box = null;
+  // box select: drag with Shift (or anything in select mode, B) to select every force of yours inside the box;
+  // hold Ctrl as well to add to the selection. Runs in the capture phase so the globe never starts rotating.
   cv.addEventListener('pointerdown', e => {
     down = { x: e.clientX, y: e.clientY, b: e.button };
-    if (e.button === 0 && e.shiftKey && G.sim && !G.pick) { box = { x: e.clientX, y: e.clientY }; G.globe.controls.enabled = false; }
-  });
+    if (e.button === 0 && (e.shiftKey || G.boxMode) && G.sim && !G.pick) {
+      box = { x: e.clientX, y: e.clientY, add: e.ctrlKey || e.metaKey, hits: new Set() };
+      G.globe.controls.enabled = false; e.stopImmediatePropagation();
+    }
+  }, { capture: true });
+  const inBox = (x1, y1, x2, y2) => {
+    const hits = new Set(), s = G.sim.s;
+    for (const u of s.units) {
+      if (u.nation !== s.player) continue;
+      const p = G.disp.get(u.id) || u.pos, air = airborne(u);
+      const q = G.globe.project(p[0], p[1], air ? 1.017 : 1.003 + G.globe.heightAt(p[0], p[1]));
+      if (q.visible && q.x >= x1 && q.x <= x2 && q.y >= y1 && q.y <= y2) hits.add(u.id);
+    }
+    return hits;
+  };
+  const boxRect = e => { const st = $('#stage').getBoundingClientRect(); return [Math.min(box.x, e.clientX) - st.left, Math.min(box.y, e.clientY) - st.top, Math.max(box.x, e.clientX) - st.left, Math.max(box.y, e.clientY) - st.top]; };
   window.addEventListener('pointermove', e => {
     if (!box) return;
-    const st = $('#stage').getBoundingClientRect(), el = $('#boxsel');
-    el.style.left = (Math.min(box.x, e.clientX) - st.left) + 'px'; el.style.top = (Math.min(box.y, e.clientY) - st.top) + 'px';
-    el.style.width = Math.abs(e.clientX - box.x) + 'px'; el.style.height = Math.abs(e.clientY - box.y) + 'px';
+    const [x1, y1, x2, y2] = boxRect(e), el = $('#boxsel');
+    el.style.left = x1 + 'px'; el.style.top = y1 + 'px'; el.style.width = (x2 - x1) + 'px'; el.style.height = (y2 - y1) + 'px';
     el.classList.remove('hidden');
+    // live preview: light up the tags of stacks that would be picked
+    box.hits = inBox(x1, y1, x2, y2);
+    el.dataset.n = box.hits.size ? `${box.hits.size} unit${box.hits.size > 1 ? 's' : ''}` : '';
+    G.boxHits = box.hits;
+    for (const t of G.markerEls.values()) if (t._st) t.classList.toggle('boxhit', t._st.units.some(u => box.hits.has(u.id)));
   });
   window.addEventListener('pointerup', e => {
     if (!box) return;
-    const st = $('#stage').getBoundingClientRect();
-    const x1 = Math.min(box.x, e.clientX) - st.left, x2 = Math.max(box.x, e.clientX) - st.left, y1 = Math.min(box.y, e.clientY) - st.top, y2 = Math.max(box.y, e.clientY) - st.top;
+    const [x1, y1, x2, y2] = boxRect(e), add = box.add || e.ctrlKey || e.metaKey;
     $('#boxsel').classList.add('hidden'); G.globe.controls.enabled = true; box = null;
+    G.boxHits = null;
+    for (const t of G.markerEls.values()) t.classList.remove('boxhit');
     if (x2 - x1 > 6 && y2 - y1 > 6) {
-      G.sel.clear();
-      for (const u of G.sim.s.units) {
-        if (u.nation !== G.sim.s.player) continue;
-        const p = G.disp.get(u.id) || u.pos; const q = G.globe.project(p[0], p[1], 1.003);
-        if (q.visible && q.x >= x1 && q.x <= x2 && q.y >= y1 && q.y <= y2) G.sel.add(u.id);
-      }
-      computeStacks(); renderSelbar(); updateRings(); if (G.sel.size) switchTab('forces');
+      const hits = inBox(x1, y1, x2, y2);
+      if (!add) G.sel.clear();
+      for (const id of hits) G.sel.add(id);
+      computeStacks(); renderSelbar(); updateRings(); if (G.sel.size) { if (G.tab !== 'forces') switchTab('forces'); else renderPanel(true); }
       down = null;
     }
+  });
+  // double-click one of your stacks (its models, its tag, or through a settlement icon): select every force of
+  // that kind in view
+  $('#stage').addEventListener('dblclick', e => {
+    if (!G.sim || G.pick || !e.target.closest('canvas, .tok, .ticon')) return;
+    const s = G.sim.s, tag = e.target.closest('.tok');
+    const hit = tag?._st ? tag._st.units[0] : pickUnit(e.clientX, e.clientY);
+    if (!hit || hit.nation !== s.player) return;
+    const sym = UNITS[hit.type].sym, b = $('#stage').getBoundingClientRect();
+    const hits = [...inBox(0, 0, b.width, b.height)].map(id => G.sim.unitById.get(id)).filter(u => u && UNITS[u.type].sym === sym);
+    if (!e.ctrlKey && !e.metaKey) G.sel.clear();
+    for (const u of hits) G.sel.add(u.id);
+    computeStacks(); renderSelbar(); updateRings(); if (G.tab !== 'forces') switchTab('forces'); else renderPanel(true);
   });
   cv.addEventListener('pointerup', e => {
     if (!down) return;
@@ -536,6 +567,7 @@ function bindInput() {
   });
   cv.addEventListener('contextmenu', e => e.preventDefault());
   cv.addEventListener('pointermove', e => {
+    if (box) { $('#tooltip').classList.add('hidden'); return; } // no region tips while drawing a selection box
     const ll = G.globe.pickLL(e.clientX, e.clientY);
     const i = ll ? G.world.regionAtLL(ll[0], ll[1]) : -1;
     if (ll) $('#ro-coords').textContent = `${Math.abs(ll[0]).toFixed(2)}°${ll[0] >= 0 ? 'N' : 'S'}  ${Math.abs(ll[1]).toFixed(2)}°${ll[1] >= 0 ? 'E' : 'W'}`;
@@ -604,6 +636,11 @@ function regionTip(i, e) {
 }
 function selectRegion(i) { G.region = i; refreshWorld(false); if (G.tab !== 'tile') switchTab('tile'); else renderPanel(true); }
 function flyTile(i, d) { const R = G.world.regions[i]; G.globe.flyTo(R.lat, R.lon, d); }
+function setBoxMode(on) {
+  G.boxMode = !!on;
+  $('#mapbar [data-m=box]')?.classList.toggle('on', G.boxMode);
+  $('#stage').classList.toggle('boxmode', G.boxMode);
+}
 function clickStack(st, add) {
   const s = G.sim.s;
   if (st.nation !== s.player) { selectRegion(st.loc); return; }
@@ -774,6 +811,7 @@ function bindChrome() {
   $('#btn-help').onclick = () => { setSpeed(0); showManual(false); };
   for (const b of document.querySelectorAll('#mapbar button')) b.onclick = () => {
     const m = b.dataset.m;
+    if (m === 'box') { setBoxMode(!G.boxMode); return; }
     if (m === 'political' || m === 'realistic') { G.overlay = m; for (const x of document.querySelectorAll('#mapbar [data-m=political],#mapbar [data-m=realistic]')) x.classList.toggle('on', x.dataset.m === m); G.globe.setOverlay(m === 'political' ? 1 : 0); if (G.sim) refreshWorld(false); }
     if (m === 'night') setNight(!G.nightCycle);
     if (m.startsWith('lens-')) { const k = m.slice(5); G.lens = G.lens === k ? null : k; for (const x of document.querySelectorAll('#mapbar [data-m^=lens-]')) x.classList.toggle('on', x.dataset.m === 'lens-' + G.lens); if (G.sim) refreshWorld(true); }
@@ -795,7 +833,9 @@ function bindChrome() {
     if (e.key.toLowerCase() === 'c') { openCabinet(); return; }
     if (e.code === 'Space') { e.preventDefault(); setSpeed(G.speed ? 0 : G.prevSpeed || 2); }
     else if (/^[1-5]$/.test(e.key)) { setSpeed(+e.key); G.prevSpeed = +e.key; }
+    else if (e.key === 'Escape' && G.boxMode) setBoxMode(false);
     else if (e.key === 'Escape') { G.sel.clear(); computeStacks(); renderSelbar(); updateRings(); renderPanel(true); }
+    else if (e.key.toLowerCase() === 'b') setBoxMode(!G.boxMode);
     else if (e.key.toLowerCase() === 'n') setNight(!G.nightCycle);
     else if (e.key.toLowerCase() === 'h') flyTile(G.sim.s.nations[G.sim.s.player].capital, 1.8);
   });
