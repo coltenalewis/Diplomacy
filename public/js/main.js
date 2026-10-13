@@ -221,6 +221,11 @@ function refreshWorld(force) {
   const owners = s.regions.map(r => (r.owner && G.empireView ? sim.realmOf(r.owner) : r.owner));
   const sig = (G.empireView ? 'E' : 'P') + owners.join(',') + '|' + Object.values(s.nations).filter(n => n.alive && n.overlord).map(n => n.code + '>' + n.overlord).join(',');
   if (force || sig !== G.ownerSig) { G.ownerSig = sig; globe.updateNationBorders(owners, c => (G.empireView ? sim.col(c) : sim.borderCol(c))); computeNationLabels(); }
+  // nations at war with us glow red along their borders (in empire view, whole realms that include a foe)
+  const foes = new Set(Object.keys(s.nations).filter(c => s.nations[c].alive && sim.atWar(P, c)));
+  if (G.empireView) for (const c of [...foes]) foes.add(sim.realmOf(c));
+  const warSig = sig + '#' + [...foes].sort().join(',');
+  if (force || warSig !== G.warSig) { G.warSig = warSig; globe.updateWarBorders(owners, c => !!c && foes.has(c), G.empireView ? sim.realmOf(P) : P); }
   for (const r of s.regions) {
     const hl = r.i === G.region ? 0.9 : r.i === G.hover ? 0.35 : 0;
     if (r.sea) { globe.setRegion(r.i, { alpha: 0, highlight: hl, light: 0, glow: 0 }); continue; }

@@ -436,6 +436,7 @@ export class Globe {
     this.graticule = this.thinLines(g, 0x9fd8ff, 0.05); scene.add(this.graticule);
     this.buildMapLines();
     this.nationGroup = new THREE.Group(); scene.add(this.nationGroup);
+    this.warGroup = new THREE.Group(); scene.add(this.warGroup);
     this.routeGroup = new THREE.Group(); scene.add(this.routeGroup);
     this.pathGroup = new THREE.Group(); scene.add(this.pathGroup);
     this.fxGroup = new THREE.Group(); scene.add(this.fxGroup);
@@ -591,6 +592,39 @@ export class Globe {
     }
     if (band.length) this.nationGroup.add(this.fatLines(band, bandCol, 0xffffff, 2.4, 0.62));
     if (core.length) this.nationGroup.add(this.fatLines(core, null, 0xe8e2d0, 1, 0.5));
+  }
+
+  // Borders of nations at war with the player glow red and beat like a heart; the front line, where the player's
+  // land meets the enemy's, beats brightest. isEnemy(owner) says whether an owner is a foe.
+  updateWarBorders(owners, isEnemy, player) {
+    for (const ch of [...this.warGroup.children]) this.dropLine(this.warGroup, ch);
+    const edge = [], front = [], R = 1.0021;
+    for (const ch of this.landChains) {
+      const a = owners[ch[0]], b = owners[ch[1]];
+      if (a === b || this.world.regions[ch[0]]?.sea || this.world.regions[ch[1]]?.sea) continue; // land borders only
+      const ea = isEnemy(a), eb = isEnemy(b);
+      if (!ea && !eb || (ea && eb)) continue; // the outline of the enemy, not the seams inside an enemy alliance
+      const out = (a === player || b === player) ? front : edge;
+      for (let k = 2; k + 3 < ch.length; k += 2) {
+        const p1 = this.gridLL(ch[k], ch[k + 1]), p2 = this.gridLL(ch[k + 2], ch[k + 3]);
+        if (Math.abs(p1[1] - p2[1]) > 90) continue;
+        out.push(...ll2v(p1[0], p1[1], R), ...ll2v(p2[0], p2[1], R));
+      }
+    }
+    const add = (pos, color, width, opacity, glow) => {
+      if (!pos.length) return;
+      const l = this.fatLines(pos, null, color, width, opacity);
+      if (glow) l.material.blending = THREE.AdditiveBlending;
+      l.renderOrder = 3; l.userData = { w: width, o: opacity, glow };
+      this.warGroup.add(l);
+    };
+    add(edge, 0xff2a14, 7, 0.32, true); add(edge, 0xff4a36, 1.6, 0.8, false);
+    add(front, 0xff2a14, 11, 0.42, true); add(front, 0xff5a40, 2.4, 0.95, false);
+  }
+  // lub-dub: two quick beats, then rest
+  heartbeat(t) {
+    const ph = (t * 1.05) % 1, g = (c, w) => Math.exp(-(((ph - c) / w) ** 2));
+    return g(0.08, 0.045) + 0.65 * g(0.27, 0.05);
   }
 
   setRegion(i, o) {
@@ -980,6 +1014,14 @@ export class Globe {
       if (age > m.userData.life) { this.dropLine(this.fxGroup, m); continue; }
       if (m.userData.tracer) { m.material.dashOffset = -age / m.userData.life * m.userData.len * 1.1; m.material.opacity = 0.95 * (1 - age / m.userData.life) + 0.05; }
       else m.material.uniforms.age.value = age;
+    }
+    if (this.warGroup.children.length) {
+      const beat = this.heartbeat(t);
+      for (const l of this.warGroup.children) {
+        const { w, o, glow } = l.userData;
+        l.material.linewidth = w * (glow ? 1 + 0.45 * beat : 1 + 0.15 * beat);
+        l.material.opacity = glow ? o * (0.35 + 1.1 * beat) : o * (0.7 + 0.3 * beat);
+      }
     }
     const near = Math.min(1, Math.max(0, (2.6 - d) / 1.2));
     this.regionBorders.material.opacity = 0.04 + 0.16 * near;
