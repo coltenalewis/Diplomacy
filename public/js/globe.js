@@ -296,6 +296,7 @@ export class Globe {
     this.lineMats = [];
     this.build();
     window.addEventListener('resize', () => this.resize());
+    if (window.ResizeObserver) new ResizeObserver(() => this.resize()).observe(this.container);
   }
 
   async load() {
