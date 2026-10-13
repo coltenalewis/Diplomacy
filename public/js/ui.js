@@ -38,7 +38,7 @@ export const avatar = (c, color) => `<div class="avatar" style="background:linea
 export function toast(head, text, cls = '', onClick, proposal) {
   const t = document.createElement('div');
   t.className = 'toast ' + cls;
-  t.innerHTML = `<button class="t-x" title="Dismiss">&times;</button><div class="t-head">${esc(head)} · ${dstr()}</div>${esc(text)}` + (proposal ? `<div class="t-actions"><button class="btn sm go" data-y="1">Accept</button><button class="btn sm danger" data-n="1">Decline</button><button class="btn sm" data-later="1">Later</button></div>` : '');
+  t.innerHTML = `<button class="t-x" title="Dismiss">&times;</button><div class="t-body"><span class="t-head">${esc(head)} · ${dstr()}</span>${esc(text)}</div>` + (proposal ? `<div class="t-actions"><button class="btn sm go" data-y="1">Accept</button><button class="btn sm danger" data-n="1">Decline</button><button class="btn sm" data-later="1">Later</button></div>` : '');
   if (proposal) t.dataset.mid = proposal.id;
   t.onclick = e => {
     try {
@@ -50,8 +50,12 @@ export function toast(head, text, cls = '', onClick, proposal) {
     finally { t.remove(); }
   };
   $('#toasts').appendChild(t);
-  setTimeout(() => t.remove(), proposal ? 25000 : 7000);
-  while ($('#toasts').children.length > 5) $('#toasts').firstChild.remove();
+  // fade out after a while, but never from under the cursor
+  const expire = () => { if (!t.isConnected) return; if (t.matches(':hover')) return setTimeout(expire, 1500); t.classList.add('out'); setTimeout(() => t.remove(), 400); };
+  setTimeout(expire, proposal ? 25000 : 5000);
+  // keep only a few on screen; proposals waiting for an answer are dropped last
+  const host = $('#toasts');
+  while (host.children.length > 3) (host.querySelector('.toast:not(.prop)') || host.firstChild).remove();
 }
 
 // unit badge icons

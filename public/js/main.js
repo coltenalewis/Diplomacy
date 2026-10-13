@@ -6,6 +6,7 @@ import { AI } from './ai.js';
 import { AGES, ageScale } from './eras.js';
 import { UNITS, SPEEDS, SETTLEMENTS } from './units.js';
 import { modelFor } from './unitmodels.js';
+import { initFloatPanel } from './floatpanel.js';
 import { TERRAIN, RES, classify, generateDeposits, rng, known } from './resources.js';
 import { styleName, resolveEvent } from './gov.js';
 import { civColor } from './names.js';
@@ -34,6 +35,7 @@ async function boot() {
   Object.assign(G.fn, { openImperial, renderPanel, answer, openDossier, selectRegion, computeStacks, renderSelbar, updateRings, refreshWorld, setSpeed, orderTo, selectedUnits, airborne, flyTile, showSetup, save, eta, renderTop });
   bindInput();
   bindChrome();
+  initFloatPanel();
   requestAnimationFrame(frame);
   showSetup();
 }
