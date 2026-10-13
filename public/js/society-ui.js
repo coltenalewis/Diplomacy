@@ -1,4 +1,5 @@
 // Society tab, the "People" section of the land panel, and the culture / faith / unrest map lenses.
+import { lensPactColor, pactsLegend } from './pacts-ui.js';
 import { SETTLEMENTS } from './units.js';
 import { GOV_TYPES, LAWS, lawOpt, TRAITS } from './gov.js';
 import { G, esc, pct, popStr, toast, setHTML, fmt } from './ui.js';
@@ -148,6 +149,7 @@ export function renderSociety(host) {
 // ---------------------------------------------------------------- map lenses
 export function lensColor(r) {
   const s = G.sim.s;
+  if (G.lens === 'pacts') return lensPactColor(G.sim, r.owner);
   if (G.lens === 'culture') return s.cultures[r.cul]?.col || '#777777';
   if (G.lens === 'faith') return s.faiths[r.rel]?.col || '#777777';
   const u = r.revolt ? 1 : r.unrest; // unrest: green to amber to red
@@ -156,6 +158,7 @@ export function lensColor(r) {
 export function lensLegend() {
   const sim = G.sim, s = sim.s;
   if (!G.lens) return '';
+  if (G.lens === 'pacts') return pactsLegend(sim);
   if (G.lens === 'unrest') return '<b>Unrest</b><div class="lg-grad"></div><div class="lg-row"><span>calm</span><span>restless</span><span>revolt</span></div>';
   const cnt = {};
   for (const i of sim.landIdx) { const r = s.regions[i]; const p = r.owner ? r.pop : (r.natives || 0); if (p < 0.05) continue; const k = G.lens === 'culture' ? r.cul : r.rel; cnt[k] = (cnt[k] || 0) + p; }

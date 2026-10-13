@@ -13,6 +13,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ll2v, v2ll, slerpLL } from './world.js';
 import { RIVERS } from './resources.js';
 import { buildModels, MODEL_KEYS } from './unitmodels.js';
+import { buildProps, updateProps } from './props.js';
 
 // All shaders work in display (sRGB) space; colour management is off so hex colours stay as authored.
 THREE.ColorManagement.enabled = false;
@@ -39,7 +40,7 @@ void main() {
 }`;
 const EARTH_FS = `
 uniform sampler2D dayTex, nightTex, waterTex, topoTex, coastTex, cloudTex, idxTex, palTex, scarTex, priorTex;
-uniform vec3 sunDir; uniform float time; uniform float overlay; uniform float cloudShift; uniform float cloudAmt; uniform float season;
+uniform vec3 sunDir; uniform float time; uniform float overlay; uniform float cloudShift; uniform float cloudAmt; uniform float season; uniform float stylized;
 varying vec2 vUv; varying vec3 vN; varying vec3 vP;
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 // sine-free hash: stays well distributed for the large cell coordinates used by settlement lights
@@ -96,6 +97,34 @@ void main() {
   float w01 = 0.5 + 0.5 * wint;
   float elev = texture2D(topoTex, vUv).r;
   float sn = vnoise(vUv * vec2(900.0, 450.0)) * 0.6 + vnoise(vUv * vec2(3600.0, 1800.0)) * 0.4;
+  // stylized terrain, the painted look of a strategy-game map: the satellite colours are sorted into a biome palette
+  // (forest, grassland, steppe, desert, rock, snow), seas run from turquoise shallows to deep blue
+  if (stylized > 0.0) {
+    float lumS = dot(day, vec3(0.3, 0.59, 0.11));
+    float gr = day.g - day.r, sat = max(day.r, max(day.g, day.b)) - min(day.r, min(day.g, day.b));
+    // snow only where it belongs: high ground or the polar north and south; elsewhere pale bare ground reads as rock
+    float wSnow = smoothstep(0.58, 0.74, lumS) * (1.0 - smoothstep(0.05, 0.12, sat)) * max(smoothstep(0.3, 0.5, elev), smoothstep(58.0, 68.0, alat));
+    float wDesert = smoothstep(0.26, 0.42, lumS) * smoothstep(0.0, 0.06, day.r - day.g) * (1.0 - wSnow);
+    float wForest = (1.0 - smoothstep(0.12, 0.24, lumS)) * smoothstep(-0.04, 0.02, gr) * (1.0 - wSnow);
+    float wGrass = smoothstep(-0.03, 0.03, gr) * (1.0 - wForest) * (1.0 - wSnow) * (1.0 - wDesert);
+    float wDry = max(0.0, 1.0 - wSnow - wDesert - wForest - wGrass);
+    float wRock = max(smoothstep(0.3, 0.55, elev), smoothstep(0.4, 0.55, lumS) * (1.0 - smoothstep(0.06, 0.12, sat)) * (1.0 - wDesert)) * (1.0 - wSnow);
+    float tropic = 1.0 - smoothstep(16.0, 28.0, alat), boreal = smoothstep(48.0, 60.0, alat);
+    vec3 cForest = mix(mix(vec3(0.2, 0.4, 0.17), vec3(0.12, 0.42, 0.17), tropic), vec3(0.15, 0.32, 0.22), boreal);
+    vec3 cGrass = mix(mix(vec3(0.5, 0.66, 0.29), vec3(0.4, 0.64, 0.24), tropic), vec3(0.46, 0.56, 0.32), boreal);
+    vec3 cDry = vec3(0.7, 0.64, 0.4), cDesert = vec3(0.91, 0.78, 0.52), cSnow = vec3(0.93, 0.95, 0.99), cRock = vec3(0.55, 0.5, 0.45);
+    vec3 pc = (cForest * wForest + cGrass * wGrass + cDry * wDry + cDesert * wDesert + cSnow * wSnow) / max(0.001, wForest + wGrass + wDry + wDesert + wSnow);
+    pc = mix(pc, cRock, wRock * 0.65);
+    float fine = vnoise(vUv * vec2(16000.0, 8000.0)) + vnoise(vUv * vec2(42000.0, 21000.0)) * 0.5;
+    pc *= (0.9 + 0.2 * sn) * (0.94 + 0.08 * fine); // painterly variation, with a fine grain for close-ups
+    pc = mix(pc, day * 1.15, 0.16); // a trace of the real texture keeps the geography readable
+    float cvS = texture2D(coastTex, vUv).r, seaS = smoothstep(0.004, 0.03, cvS);
+    float cdS = clamp((cvS * 255.0 - 8.0) / 247.0, 0.0, 1.0);
+    vec3 sc = mix(vec3(0.2, 0.62, 0.68), vec3(0.08, 0.3, 0.52), smoothstep(0.0, 0.35, cdS));
+    sc = mix(sc, vec3(0.05, 0.2, 0.42), smoothstep(0.6, 1.0, cdS));
+    sc = mix(sc, day * 1.1, 0.2);
+    day = mix(day, mix(pc, sc, seaS), stylized);
+  }
   float snowLine = mix(71.0, 42.0, w01 * w01) - elev * 48.0 * (0.4 + 0.6 * w01);
   float snow = smoothstep(snowLine - 2.0, snowLine + 6.0, alat + (sn - 0.5) * 9.0) * (1.0 - smoothstep(0.3, 0.6, water));
   float veg = smoothstep(0.0, 0.05, day.g - max(day.r, day.b) * 0.92) * (1.0 - water);
@@ -111,8 +140,17 @@ void main() {
   float ice = smoothstep(iceLine - 1.5, iceLine + 2.5, alat + (sn - 0.5) * 5.0) * smoothstep(0.3, 0.6, water);
   day = mix(day, vec3(0.82, 0.88, 0.95) * (0.9 + 0.1 * sn), ice * 0.9);
   float relief = 0.55 + 0.75 * max(ndlR, 0.0) / max(0.25, max(ndl, 0.0) + 0.25);
+  // cel-shaded hills in the stylized look
+  float rb = relief * 5.0;
+  relief = mix(relief, (floor(rb) + smoothstep(0.3, 0.7, fract(rb))) / 5.0, stylized);
   vec3 dayCol = day * (0.12 + 0.8 * pow(max(ndl, 0.0), 0.7)) * mix(1.0, relief, 0.75 * (1.0 - water));
   dayCol = dayCol / (1.0 + dayCol * 0.35); // soft tone-map
+  // contour lines on the stylized map, fading out before they crowd together
+  if (stylized > 0.0) {
+    float cz = elev * 12.0, fw = max(fwidth(cz), 1e-4);
+    float cline = (1.0 - smoothstep(0.5, 1.5, abs(fract(cz + 0.5) - 0.5) / fw)) * (1.0 - smoothstep(0.06, 0.2, fw));
+    dayCol *= 1.0 - cline * 0.12 * stylized * step(0.02, elev) * (1.0 - smoothstep(0.3, 0.6, water));
+  }
   vec4 cs = texture2D(cloudTex, vec2(vUv.x + cloudShift - 0.0015, vUv.y));
   float shadow = cs.a * max(cs.r, cs.g);
   dayCol *= 1.0 - shadow * 0.32 * cloudAmt;
@@ -292,6 +330,7 @@ export class Globe {
     this.composer.addPass(this.bloom);
     this.composer.addPass(new OutputPass());
     this.clock = new THREE.Clock();
+    this.stylized = true;
     this.routes = new Map();
     this.lineMats = [];
     this.build();
@@ -316,6 +355,8 @@ export class Globe {
     } catch (e) { console.warn('height map', e); }
     try { u.priorTex.value = this.buildPrior(night.image, water.image); } catch (e) { console.warn('settlement map', e); }
     try { u.coastTex.value = this.buildCoast(water.image, big ? 4096 : 2048); } catch (e) { console.warn('coast map', e); }
+    // scenery for the stylized map, built once the height map is in
+    setTimeout(() => { try { this.props = buildProps(this, day.image, water.image); this.props.group.visible = this.stylized !== false; } catch (e) { console.warn('scenery', e); } }, 30);
     this.sky.material.map = sky; this.sky.material.needsUpdate = true;
     get('textures/clouds.png').then(cl => { u.cloudTex.value = cl; this.clouds.material.uniforms.cloudTex.value = cl; this.clouds.visible = true; }).catch(() => {});
   }
@@ -416,7 +457,7 @@ export class Globe {
     const mat = new THREE.ShaderMaterial({
       vertexShader: TERRAIN_VS, fragmentShader: EARTH_FS,
       uniforms: { relief: { value: 0.0065 }, dayTex: { value: blank }, nightTex: { value: blank }, waterTex: { value: blank }, topoTex: { value: blank }, coastTex: { value: blank }, cloudTex: { value: blank }, priorTex: { value: blank },
-        idxTex: { value: idxTex }, idxSize: { value: new THREE.Vector2(idxTex.image.width, idxTex.image.height) }, palTex: { value: palTex }, scarTex: { value: this.scarTex }, sunDir, cloudShift, cloudAmt, season, time: { value: 0 }, overlay: { value: 1 } },
+        idxTex: { value: idxTex }, idxSize: { value: new THREE.Vector2(idxTex.image.width, idxTex.image.height) }, palTex: { value: palTex }, scarTex: { value: this.scarTex }, sunDir, cloudShift, cloudAmt, season, stylized: { value: 1 }, time: { value: 0 }, overlay: { value: 1 } },
     });
     this.earth = new THREE.Mesh(new THREE.SphereGeometry(1, 720, 360), mat);
     scene.add(this.earth);
@@ -436,6 +477,7 @@ export class Globe {
     this.graticule = this.thinLines(g, 0x9fd8ff, 0.05); scene.add(this.graticule);
     this.buildMapLines();
     this.nationGroup = new THREE.Group(); scene.add(this.nationGroup);
+    this.warGroup = new THREE.Group(); scene.add(this.warGroup);
     this.routeGroup = new THREE.Group(); scene.add(this.routeGroup);
     this.pathGroup = new THREE.Group(); scene.add(this.pathGroup);
     this.fxGroup = new THREE.Group(); scene.add(this.fxGroup);
@@ -593,6 +635,39 @@ export class Globe {
     if (core.length) this.nationGroup.add(this.fatLines(core, null, 0xe8e2d0, 1, 0.5));
   }
 
+  // Borders of nations at war with the player glow red and beat like a heart; the front line, where the player's
+  // land meets the enemy's, beats brightest. isEnemy(owner) says whether an owner is a foe.
+  updateWarBorders(owners, isEnemy, player) {
+    for (const ch of [...this.warGroup.children]) this.dropLine(this.warGroup, ch);
+    const edge = [], front = [], R = 1.0021;
+    for (const ch of this.landChains) {
+      const a = owners[ch[0]], b = owners[ch[1]];
+      if (a === b || this.world.regions[ch[0]]?.sea || this.world.regions[ch[1]]?.sea) continue; // land borders only
+      const ea = isEnemy(a), eb = isEnemy(b);
+      if (!ea && !eb || (ea && eb)) continue; // the outline of the enemy, not the seams inside an enemy alliance
+      const out = (a === player || b === player) ? front : edge;
+      for (let k = 2; k + 3 < ch.length; k += 2) {
+        const p1 = this.gridLL(ch[k], ch[k + 1]), p2 = this.gridLL(ch[k + 2], ch[k + 3]);
+        if (Math.abs(p1[1] - p2[1]) > 90) continue;
+        out.push(...ll2v(p1[0], p1[1], R), ...ll2v(p2[0], p2[1], R));
+      }
+    }
+    const add = (pos, color, width, opacity, glow) => {
+      if (!pos.length) return;
+      const l = this.fatLines(pos, null, color, width, opacity);
+      if (glow) l.material.blending = THREE.AdditiveBlending;
+      l.renderOrder = 3; l.userData = { w: width, o: opacity, glow };
+      this.warGroup.add(l);
+    };
+    add(edge, 0xff2a14, 7, 0.32, true); add(edge, 0xff4a36, 1.6, 0.8, false);
+    add(front, 0xff2a14, 11, 0.42, true); add(front, 0xff5a40, 2.4, 0.95, false);
+  }
+  // lub-dub: two quick beats, then rest
+  heartbeat(t) {
+    const ph = (t * 1.05) % 1, g = (c, w) => Math.exp(-(((ph - c) / w) ** 2));
+    return g(0.08, 0.045) + 0.65 * g(0.27, 0.05);
+  }
+
   setRegion(i, o) {
     const p = this.pal, k = i * 4, k2 = (4096 + i) * 4;
     if (o.color) { const c = parseInt(o.color.slice(1), 16); p[k] = c >> 16; p[k + 1] = (c >> 8) & 255; p[k + 2] = c & 255; }
@@ -604,6 +679,7 @@ export class Globe {
   }
   commitPalette() { this.palTex.needsUpdate = true; }
   setOverlay(v) { this.earth.material.uniforms.overlay.value = v; }
+  setStylized(v) { this.stylized = !!v; this.earth.material.uniforms.stylized.value = v ? 1 : 0; if (this.props) this.props.group.visible = !!v; }
   setClouds(v) { this.u.cloudAmt.value = v; }
 
   // paint a scorched crater (nuclear strike) into the scar layer
@@ -973,6 +1049,7 @@ export class Globe {
     this.controls.update();
     if (this.alwaysDay) this.u.sunDir.value.copy(this.camera.position).normalize().add(new THREE.Vector3(0, 0.25, 0)).normalize();
     this.earth.material.uniforms.time.value = t;
+    updateProps(this.props, this.camera);
     for (const line of this.routeGroup.children) if (line.material.dashed) line.material.dashOffset -= 0.05 * dt;
     for (const line of this.pathGroup.children) line.material.dashOffset -= 0.02 * dt;
     for (const m of [...this.fxGroup.children]) {
@@ -980,6 +1057,14 @@ export class Globe {
       if (age > m.userData.life) { this.dropLine(this.fxGroup, m); continue; }
       if (m.userData.tracer) { m.material.dashOffset = -age / m.userData.life * m.userData.len * 1.1; m.material.opacity = 0.95 * (1 - age / m.userData.life) + 0.05; }
       else m.material.uniforms.age.value = age;
+    }
+    if (this.warGroup.children.length) {
+      const beat = this.heartbeat(t);
+      for (const l of this.warGroup.children) {
+        const { w, o, glow } = l.userData;
+        l.material.linewidth = w * (glow ? 1 + 0.45 * beat : 1 + 0.15 * beat);
+        l.material.opacity = glow ? o * (0.35 + 1.1 * beat) : o * (0.7 + 0.3 * beat);
+      }
     }
     const near = Math.min(1, Math.max(0, (2.6 - d) / 1.2));
     this.regionBorders.material.opacity = 0.04 + 0.16 * near;

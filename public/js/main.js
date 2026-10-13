@@ -7,6 +7,8 @@ import { AGES, ageScale } from './eras.js';
 import { UNITS, SPEEDS, SETTLEMENTS } from './units.js';
 import { modelFor } from './unitmodels.js';
 import { initFloatPanel } from './floatpanel.js';
+import { openSessionDialog } from './pacts-ui.js';
+import { pactById } from './pacts.js';
 import { TERRAIN, RES, classify, generateDeposits, rng, known } from './resources.js';
 import { styleName, resolveEvent } from './gov.js';
 import { civColor } from './names.js';
@@ -32,7 +34,7 @@ async function boot() {
   G.globe.initUnits();
   await G.globe.load();
   G.globe.setSunHours(SUN0, 0);
-  Object.assign(G.fn, { openImperial, renderPanel, answer, openDossier, selectRegion, computeStacks, renderSelbar, updateRings, refreshWorld, setSpeed, orderTo, selectedUnits, airborne, flyTile, showSetup, save, eta, renderTop });
+  Object.assign(G.fn, { openImperial, renderPanel, switchTab, answer, openDossier, selectRegion, computeStacks, renderSelbar, updateRings, refreshWorld, setSpeed, orderTo, selectedUnits, airborne, flyTile, showSetup, save, eta, renderTop });
   bindInput();
   bindChrome();
   initFloatPanel();
@@ -221,10 +223,15 @@ function refreshWorld(force) {
   const owners = s.regions.map(r => (r.owner && G.empireView ? sim.realmOf(r.owner) : r.owner));
   const sig = (G.empireView ? 'E' : 'P') + owners.join(',') + '|' + Object.values(s.nations).filter(n => n.alive && n.overlord).map(n => n.code + '>' + n.overlord).join(',');
   if (force || sig !== G.ownerSig) { G.ownerSig = sig; globe.updateNationBorders(owners, c => (G.empireView ? sim.col(c) : sim.borderCol(c))); computeNationLabels(); }
+  // nations at war with us glow red along their borders (in empire view, whole realms that include a foe)
+  const foes = new Set(Object.keys(s.nations).filter(c => s.nations[c].alive && sim.atWar(P, c)));
+  if (G.empireView) for (const c of [...foes]) foes.add(sim.realmOf(c));
+  const warSig = sig + '#' + [...foes].sort().join(',');
+  if (force || warSig !== G.warSig) { G.warSig = warSig; globe.updateWarBorders(owners, c => !!c && foes.has(c), G.empireView ? sim.realmOf(P) : P); }
   for (const r of s.regions) {
     const hl = r.i === G.region ? 0.9 : r.i === G.hover ? 0.35 : 0;
     if (r.sea) { globe.setRegion(r.i, { alpha: 0, highlight: hl, light: 0, glow: 0 }); continue; }
-    if (G.lens && (r.owner || (r.natives || 0) > 0.05) && !(G.lens === 'unrest' && !r.owner)) {
+    if (G.lens && (r.owner || (r.natives || 0) > 0.05) && !((G.lens === 'unrest' || G.lens === 'pacts') && !r.owner)) {
       globe.setRegion(r.i, { color: lensColor(r), alpha: r.owner ? 0.55 : 0.3, highlight: hl, light: 0, glow: r.owner ? Math.min(0.95, 0.1 + r.lvl * 0.12) * (1 - r.damage) : 0.05, contested: r.revolt ? 0.9 : r.capture ? Math.min(1, 0.4 + r.capture.p) : 0 });
       continue;
     }
@@ -636,6 +643,10 @@ function regionTip(i, e) {
 }
 function selectRegion(i) { G.region = i; refreshWorld(false); if (G.tab !== 'tile') switchTab('tile'); else renderPanel(true); }
 function flyTile(i, d) { const R = G.world.regions[i]; G.globe.flyTo(R.lat, R.lon, d); }
+function setStylized(on) {
+  G.globe.setStylized(on);
+  $('#mapbar [data-m=stylized]')?.classList.toggle('on', !!on);
+}
 function setBoxMode(on) {
   G.boxMode = !!on;
   $('#mapbar [data-m=box]')?.classList.toggle('on', G.boxMode);
@@ -689,6 +700,13 @@ function onEvent(e) {
   const sim = G.sim, s = sim.s;
   if (e.kind === 'message') { const m = e.msg; toast(`${sim.nm(m.from)} · ${m.proposal ? 'Proposal' : 'Envoy'}`, m.text, m.proposal ? 'prop' : '', () => openDossier(m.from), m.proposal ? m : null); return; }
   if (e.kind === 'rp') { G.fn.showEvent(e.ev); return; }
+  if (e.kind === 'pactSession') {
+    const X = pactById(sim, e.pact); if (!X) return;
+    const busy = [...document.querySelectorAll('.modal')].some(m => !m.classList.contains('hidden'));
+    if (!busy) openSessionDialog(X.id);
+    else toast(X.name, `The ${X.name} convenes. Your vote is awaited.`, 'prop', () => openSessionDialog(X.id));
+    return;
+  }
   const mine = e.nations?.includes(s.player);
   if (e.loc !== undefined && ['capture', 'war', 'terror'].includes(e.kind)) { const R = G.world.regions[e.loc]; G.globe.flash(R.lat, R.lon, e.kind === 'capture' ? 0xff8a3d : 0xff3344); }
   const go = () => { if (e.loc !== undefined) { flyTile(e.loc); selectRegion(e.loc); } };
@@ -812,6 +830,7 @@ function bindChrome() {
   for (const b of document.querySelectorAll('#mapbar button')) b.onclick = () => {
     const m = b.dataset.m;
     if (m === 'box') { setBoxMode(!G.boxMode); return; }
+    if (m === 'stylized') { setStylized(!G.globe.stylized); return; }
     if (m === 'political' || m === 'realistic') { G.overlay = m; for (const x of document.querySelectorAll('#mapbar [data-m=political],#mapbar [data-m=realistic]')) x.classList.toggle('on', x.dataset.m === m); G.globe.setOverlay(m === 'political' ? 1 : 0); if (G.sim) refreshWorld(false); }
     if (m === 'night') setNight(!G.nightCycle);
     if (m.startsWith('lens-')) { const k = m.slice(5); G.lens = G.lens === k ? null : k; for (const x of document.querySelectorAll('#mapbar [data-m^=lens-]')) x.classList.toggle('on', x.dataset.m === 'lens-' + G.lens); if (G.sim) refreshWorld(true); }
@@ -836,6 +855,7 @@ function bindChrome() {
     else if (e.key === 'Escape' && G.boxMode) setBoxMode(false);
     else if (e.key === 'Escape') { G.sel.clear(); computeStacks(); renderSelbar(); updateRings(); renderPanel(true); }
     else if (e.key.toLowerCase() === 'b') setBoxMode(!G.boxMode);
+    else if (e.key.toLowerCase() === 't') setStylized(!G.globe.stylized);
     else if (e.key.toLowerCase() === 'n') setNight(!G.nightCycle);
     else if (e.key.toLowerCase() === 'h') flyTile(G.sim.s.nations[G.sim.s.player].capital, 1.8);
   });

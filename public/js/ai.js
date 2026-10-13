@@ -1,4 +1,5 @@
 // AI rulers for every non-player civilization, ministers acting on the player's directives, and AI responses to diplomacy.
+import { pactsOf } from './pacts.js';
 import { UNITS, LINES, bestOf, BUILDINGS, WONDERS, SETTLEMENTS } from './units.js';
 import { RES, IMPROVEMENTS, IMP_ORDER, IMP_CAP, TERRAIN, known } from './resources.js';
 import { GOV_TYPES, govAvailable, reform, reformCost, enact, canEnact, LAWS } from './gov.js';
@@ -355,6 +356,10 @@ export class AI {
         const theirP = sim.realmPower(o) + (s.nations[o].st.income || 0) * 0.05;
         if (sim.realmOf(o) === sim.realmOf(c)) continue;
         let allyP = 0; for (const a of sim.alliesOf(o)) if (sim.rel(a, c) !== 'alliance') allyP += this.power(a) * 0.35;
+        // a defensive pact stands behind its members; our own pact may forbid the war outright
+        if (pactsOf(sim, o).some(P => P.doctrines.nonaggression && P.members.includes(c))) continue;
+        const shield = new Set(); for (const P of pactsOf(sim, o)) if (P.doctrines.defense && !P.members.includes(c)) for (const m of P.members) if (m !== o) shield.add(m);
+        for (const m of shield) if (!sim.alliesOf(o).includes(m)) allyP += this.power(m) * 0.3;
         if (contact < 1 && N.age < 3) continue;
         let sc = t.aggression * (s.temper || 1) * 1.4 * (myP / (theirP + allyP + 2)) * Math.min(1.5, contact * 0.35 + 0.3);
         sc *= contact < 1 ? 0.4 : 1;
@@ -999,13 +1004,14 @@ export class AI {
     let ok = false, why = '';
     if (p.type === 'nap') {
       if (rel !== 'peace') return { ok: false, why: rel === 'war' ? 'We are at war. Offer peace first.' : 'We already have a treaty.' };
-      const sc = op / 20 + t.caution * 1.5 + (theirP > myP ? 1 : 0) - t.aggression;
+      const sc = op / 20 + t.caution * 1.5 + (theirP > myP ? 1 : 0) - t.aggression - (s.nations[from].rep?.oathbreaker || 0) / 30;
       ok = sc > 0.6; why = ok ? (theirP > myP ? 'Peace with a strong neighbour is wise.' : 'Peace serves us both.') : 'We see no need to tie our hands.';
     } else if (p.type === 'alliance') {
       if (rel === 'war') return { ok: false, why: 'We are at war with you.' };
       if (rel === 'alliance') return { ok: false, why: 'We are already allies.' };
-      const sc = op / 15 + (commonEnemy ? 2.5 : 0) + t.loyalty - (theirP > myP * 6 ? 1 : 0) + (rel === 'nap' ? 0.8 : 0);
-      ok = sc > 3; why = ok ? (commonEnemy ? 'Together we will crush our common enemy.' : 'Our friendship has earned this.') : op < 20 ? 'We do not yet trust you enough.' : 'An alliance does not serve us now.';
+      const rep = s.nations[from].rep || {};
+      const sc = op / 15 + (commonEnemy ? 2.5 : 0) + t.loyalty - (theirP > myP * 6 ? 1 : 0) + (rel === 'nap' ? 0.8 : 0) - (rep.oathbreaker || 0) / 18 + (rep.steadfast || 0) / 30;
+      ok = sc > 3; why = ok ? (commonEnemy ? 'Together we will crush our common enemy.' : (rep.steadfast || 0) > 25 ? 'Your word is known to be good.' : 'Our friendship has earned this.') : (rep.oathbreaker || 0) > 25 ? 'You have broken your word before. We will not tie our fate to yours.' : op < 20 ? 'We do not yet trust you enough.' : 'An alliance does not serve us now.';
     } else if (p.type === 'peace') {
       if (rel !== 'war') return { ok: false, why: 'We are not at war.' };
       const sc = A.exhaustion * 4 + (theirP > myP ? 1.5 : -0.5) + t.caution + op / 50 - t.aggression;
