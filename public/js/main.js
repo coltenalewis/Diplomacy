@@ -641,6 +641,10 @@ function regionTip(i, e) {
 }
 function selectRegion(i) { G.region = i; refreshWorld(false); if (G.tab !== 'tile') switchTab('tile'); else renderPanel(true); }
 function flyTile(i, d) { const R = G.world.regions[i]; G.globe.flyTo(R.lat, R.lon, d); }
+function setStylized(on) {
+  G.globe.setStylized(on);
+  $('#mapbar [data-m=stylized]')?.classList.toggle('on', !!on);
+}
 function setBoxMode(on) {
   G.boxMode = !!on;
   $('#mapbar [data-m=box]')?.classList.toggle('on', G.boxMode);
@@ -817,6 +821,7 @@ function bindChrome() {
   for (const b of document.querySelectorAll('#mapbar button')) b.onclick = () => {
     const m = b.dataset.m;
     if (m === 'box') { setBoxMode(!G.boxMode); return; }
+    if (m === 'stylized') { setStylized(!G.globe.stylized); return; }
     if (m === 'political' || m === 'realistic') { G.overlay = m; for (const x of document.querySelectorAll('#mapbar [data-m=political],#mapbar [data-m=realistic]')) x.classList.toggle('on', x.dataset.m === m); G.globe.setOverlay(m === 'political' ? 1 : 0); if (G.sim) refreshWorld(false); }
     if (m === 'night') setNight(!G.nightCycle);
     if (m.startsWith('lens-')) { const k = m.slice(5); G.lens = G.lens === k ? null : k; for (const x of document.querySelectorAll('#mapbar [data-m^=lens-]')) x.classList.toggle('on', x.dataset.m === 'lens-' + G.lens); if (G.sim) refreshWorld(true); }
@@ -841,6 +846,7 @@ function bindChrome() {
     else if (e.key === 'Escape' && G.boxMode) setBoxMode(false);
     else if (e.key === 'Escape') { G.sel.clear(); computeStacks(); renderSelbar(); updateRings(); renderPanel(true); }
     else if (e.key.toLowerCase() === 'b') setBoxMode(!G.boxMode);
+    else if (e.key.toLowerCase() === 't') setStylized(!G.globe.stylized);
     else if (e.key.toLowerCase() === 'n') setNight(!G.nightCycle);
     else if (e.key.toLowerCase() === 'h') flyTile(G.sim.s.nations[G.sim.s.player].capital, 1.8);
   });
