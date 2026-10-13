@@ -12,6 +12,8 @@ import { openWar, openCabinet, cabinetReady, openTree, queueTech } from './dialo
 import { renderSociety, tileSocietyHTML } from './society-ui.js';
 import { plagueStatus } from './crises.js';
 import { lineOptions } from './units.js';
+import { repChips, repSection, pactsListHTML, bindPactsList, renderPactPage, answeredCall, applyPactProposal } from './pacts-ui.js';
+import { repOpinion, pactsOf, canJoin, invite } from './pacts.js';
 
 const REL_LABEL = { war: 'At war', peace: 'Peace', nap: 'Non-aggression', alliance: 'Alliance' };
 const traitChips = c => c.traits.map(t => `<span class="trait ${['Corrupt', 'Ambitious'].includes(t) ? 'bad' : ''}" title="${esc(TRAITS[t]?.desc || '')}">${t}</span>`).join('');
@@ -212,7 +214,8 @@ export function siegeStatus(i) {
 // ======================================================================= realm
 function renderRealm(host) {
   const sim = G.sim, s = sim.s, P = s.player, N = s.nations[P], st = N.st;
-  let h = `<div class="card"><div class="big">${esc(styleName(N))}</div><div class="sub">${st.tiles} lands · ${popStr(st.pop)} people · ${AGES[N.age].name}</div></div>`;
+  let h = `<div class="card"><div class="big">${esc(styleName(N))}</div><div class="sub">${st.tiles} lands · ${popStr(st.pop)} people · ${AGES[N.age].name}</div>${repChips(N)}</div>`;
+  h += repSection(sim, P, 'Your reputation');
   h += `<div class="sec"><div class="sec-title">Stores</div><table class="stocks"><tr><th></th><th>Stock</th><th>Made</th><th>Used</th><th>Trade</th><th>Net/day</th><th></th></tr>`;
   for (const k of ['food', 'wood', 'stone', 'metal', 'wealth', 'oil']) {
     if ((k === 'metal' || k === 'wealth') && N.age < 1 && !N[k]) continue;
@@ -627,6 +630,7 @@ const opBar = v => { const w = Math.abs(v) / 2; return `<span class="opbar" titl
 function renderDiplomacy(host) {
   const sim = G.sim, s = sim.s, P = s.player, Me = s.nations[P];
   const inbox = s.messages.filter(m => m.to === P && m.status === 'pending');
+  if (G.pact != null && !G.dip && renderPactPage(host)) return;
   if (!G.dip || !Me.known.includes(G.dip)) {
     G.dip = null;
     let list = Me.known.filter(c => s.nations[c]?.alive);
@@ -634,6 +638,7 @@ function renderDiplomacy(host) {
     list.sort((a, b) => (sim.atWar(P, b) - sim.atWar(P, a)) || (sim.score(b) - sim.score(a)));
     let h = '';
     if (inbox.length) h += `<div class="sec"><div class="sec-title">Proposals awaiting you</div>${inbox.map(m => `<div class="msg"><div class="m-meta">${esc(sim.nm(m.from))} · ${dstr(m.y)}</div>${esc(m.text)}<div style="display:flex;gap:6px;margin-top:6px"><button class="btn sm go" data-ans="${m.id}" data-v="1">Accept</button><button class="btn sm danger" data-ans="${m.id}" data-v="0">Decline</button><button class="btn sm" data-open="${m.from}">Dossier</button></div></div>`).join('')}</div>`;
+    h += pactsListHTML(sim);
     h += `<div class="sec"><div class="sec-title">Known peoples (${list.length})</div>`;
     if (!Me.known.length) h += `<div class="muted small">You have met no one yet. Expand your borders, send warriors exploring, or sail the coasts to make contact.</div>`;
     else h += `<input class="inp" id="dip-q" placeholder="Search..." value="${esc(G.dipFilter)}">`;
@@ -644,6 +649,7 @@ function renderDiplomacy(host) {
     }).join('');
     h += '</div>';
     if (!setHTML(host, h)) return;
+    bindPactsList(host);
     const q = $('#dip-q'); if (q) q.oninput = () => { G.dipFilter = q.value; renderPanel(true); const x = $('#dip-q'); x.focus(); x.setSelectionRange(G.dipFilter.length, G.dipFilter.length); };
     for (const b of host.querySelectorAll('[data-open]')) b.onclick = e => { e.stopPropagation(); openDossier(b.dataset.open); };
     for (const b of host.querySelectorAll('[data-ans]')) b.onclick = e => { e.stopPropagation(); answer(s.messages.find(m => m.id === +b.dataset.ans), b.dataset.v === '1'); };
@@ -658,10 +664,11 @@ function renderDiplomacy(host) {
   const guaranteed = s.guarantees.some(x => x.by === P && x.of === c);
   const envoy = s.chars[N.gov.cabinet.foreign];
   let h = `<span class="chip" id="dip-back">&#9666; All peoples</span>
-    <div class="card" style="margin-top:8px"><div class="big" style="color:${N.color}">${esc(sim.full(c))}</div><div class="sub">${GOV_TYPES[N.gov.type].name} · ${AGES[N.age].name}${N.alive ? '' : ' · fallen'}${N.overlord ? ` · ${N.overlord === P ? '<span style="color:var(--gold)">your vassal</span>' : `vassal of the ${esc(sim.nm(N.overlord))}`}` : ''}${Me.overlord === c ? ' · <span style="color:var(--gold)">your overlord</span>' : ''}${sim.vassalsOf(c).length ? ` · ${sim.vassalsOf(c).length} vassal${sim.vassalsOf(c).length > 1 ? 's' : ''}` : ''}</div>
+    <div class="card" style="margin-top:8px"><div class="big" style="color:${N.color}">${esc(sim.full(c))}</div>${repChips(N)}<div class="sub">${GOV_TYPES[N.gov.type].name} · ${AGES[N.age].name}${N.alive ? '' : ' · fallen'}${N.overlord ? ` · ${N.overlord === P ? '<span style="color:var(--gold)">your vassal</span>' : `vassal of the ${esc(sim.nm(N.overlord))}`}` : ''}${Me.overlord === c ? ' · <span style="color:var(--gold)">your overlord</span>' : ''}${sim.vassalsOf(c).length ? ` · ${sim.vassalsOf(c).length} vassal${sim.vassalsOf(c).length > 1 ? 's' : ''}` : ''}</div>
     <div class="grid2" style="margin-top:8px">
       <span>Relation</span><span><span class="status ${r}">${REL_LABEL[r]}</span></span>
-      <span>Their opinion of you</span><span>${Math.round(sim.opinion(c, P))} ${opBar(sim.opinion(c, P))}</span>
+      <span>Their opinion of you</span><span>${Math.round(sim.opinion(c, P))} ${opBar(sim.opinion(c, P))}${Math.abs(repOpinion(sim, c, P)) >= 1 ? `<br><span class="small muted">${repOpinion(sim, c, P) > 0 ? '+' : ''}${Math.round(repOpinion(sim, c, P))} from your reputation and shared pacts</span>` : ''}</span>
+      <span>Pacts</span><span>${pactsOf(sim, c).map(x => `<span class="pact-link" data-pactlink="${x.id}" style="color:${x.color}">${esc(x.name)}</span>`).join(', ') || '<span class="muted">none</span>'}</span>
       <span>Lands / people</span><span>${N.st.tiles} / ${popStr(N.st.pop)}</span>
       <span>Military strength</span><span>${fmt(sim.power(c))} <span class="muted">(you ${fmt(sim.power(P))})</span></span>
       <span>Technologies</span><span>${Object.keys(N.techs).length} <span class="muted">(you ${Object.keys(Me.techs).length})</span></span>
@@ -693,6 +700,7 @@ function renderDiplomacy(host) {
       <button class="btn" data-act="alliance" ${r === 'alliance' || r === 'war' ? 'disabled' : ''}>Propose alliance</button>
       ${r === 'war' ? '<button class="btn go" data-act="peace">Offer peace</button>' : N.overlord === P || Me.overlord === c ? '<span></span>' : '<button class="btn danger" data-act="war">Declare war</button>'}
       ${N.overlord === P || Me.overlord === c ? '<span></span>' : r === 'alliance' ? '<button class="btn danger" data-act="break">End alliance</button>' : r === 'nap' ? '<button class="btn danger" data-act="break">End pact</button>' : '<span></span>'}
+      ${pactsOf(sim, P).some(x => canJoin(sim, x, c).ok) ? '<button class="btn" data-act="pactInvite">Invite to a pact &#9656;</button>' : ''}
     </div></div>
     <div class="sec"><div class="sec-title">Statecraft</div><div class="actions">
       <button class="btn" data-act="gift" data-amt="${gift}" ${Me.age < 1 ? 'data-good="food"' : 'data-good="wealth"'}>Send gifts (${gift} ${Me.age < 1 ? 'food' : 'wealth'})</button>
@@ -725,6 +733,7 @@ function renderDiplomacy(host) {
   h += `<div class="sec"><div class="sec-title">Messages</div>${msgs.map(m => `<div class="msg ${m.from === P ? 'out' : ''}"><div class="m-meta">${m.from === P ? 'You' : esc(sim.nm(c))} · ${dstr(m.y)}${m.status && m.status !== 'pending' ? ' · ' + m.status : ''}</div>${esc(m.text)}${m.status === 'pending' && m.from === c ? `<div style="display:flex;gap:6px;margin-top:6px"><button class="btn sm go" data-ans="${m.id}" data-v="1">Accept</button><button class="btn sm danger" data-ans="${m.id}" data-v="0">Decline</button></div>` : ''}</div>`).join('') || '<div class="muted small">No messages.</div>'}</div>`;
   if (!setHTML(host, h)) return;
   $('#dip-back').onclick = () => { G.dip = null; renderPanel(true); };
+  for (const l of host.querySelectorAll('[data-pactlink]')) l.onclick = () => { G.dip = null; G.pact = +l.dataset.pactlink; renderPanel(true); };
   for (const b of host.querySelectorAll('[data-ans]')) b.onclick = () => answer(s.messages.find(m => m.id === +b.dataset.ans), b.dataset.v === '1');
   for (const b of host.querySelectorAll('[data-act]')) b.onclick = () => dipAct(c, b.dataset.act, b.dataset);
   host.querySelector('#v-trib')?.addEventListener('change', e => { N.tribute = +e.target.value; toast('Vassals', `Tribute from the ${sim.nm(c)} set to ${Math.round(N.tribute * 100)}%.`, ''); renderPanel(true); });
@@ -765,6 +774,7 @@ function dipAct(c, act, data) {
     if (!give.length || !get.length) return toast('Diplomacy', !get.length ? 'They know nothing we could learn.' : 'We have nothing they could learn.', 'warn');
     return subPick('We would like to learn:', get.map(id => [id, TECH[id].name]), want => subPick(`In exchange for ${TECH[want].name}, we teach:`, give.map(id => [id, TECH[id].name]), offer => propose(c, { type: 'techswap', give: offer, get: want })));
   }
+  if (act === 'pactInvite') return subPick('Invite them to:', pactsOf(sim, P).filter(x => canJoin(sim, x, c).ok).map(x => [x.id, x.name]), v => res(invite(sim, s.pacts.find(x => x.id === +v), P, c)));
   if (act === 'joint') return subPick('Ask them to join your war against:', sim.warsOf(P).filter(t => !sim.atWar(c, t)).map(x => [x, sim.nm(x)]), v => propose(c, { type: 'joint', target: v }));
   propose(c, { type: act });
 }
@@ -799,6 +809,7 @@ function applyProposal(a, b, p) {
     sim.emit('trade', `The ${sim.nm(p.from)} will supply ${sim.goodName(p.good)} to the ${sim.nm(p.to)}.`, [p.from, p.to]);
   }
   if (p.type === 'joint') { const ally = a === sim.s.player ? b : a; sim.declareWar(ally, p.target); }
+  if (p.type === 'pactInvite' || p.type === 'pactApply') return applyPactProposal(sim, a, b, p);
   // a is the foreign ruler, b the player
   if (p.type === 'vassal' || p.type === 'vassalPeace' || p.type === 'vassalOffer') sim.makeVassal(a, b, p.type === 'vassalPeace' ? 'war' : 'treaty');
   if (p.type === 'vassalDemand') sim.makeVassal(b, a, sim.atWar(a, b) ? 'war' : 'treaty');
@@ -811,6 +822,7 @@ export function answer(m, yes) {
   m.status = yes ? 'accepted' : 'declined'; m.unread = false;
   dropToast(m.id);
   const p = m.proposal;
+  answeredCall(sim, m, yes);
   if (yes) {
     if (p.type === 'callToArms') { sim.declareWar(P, p.against); sim.addOpinion(m.from, P, 15); }
     else if (applyProposal(m.from, P, p) === false) { m.status = 'failed'; renderPanel(true); return; }

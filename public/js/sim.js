@@ -6,6 +6,7 @@ import { AGES, NAGES, ageScale, YEARS_PER_DAY } from './eras.js';
 import { TERRAIN, RES, IMPROVEMENTS, IMP_ORDER, IMP_CAP, LABOR, STRATEGIC, LUXURIES, classify, generateDeposits, rng, known } from './resources.js';
 import { pressureDaily, onAcquire, addInfamy } from './pressure.js';
 import { crisesDaily, applyScenario } from './crises.js';
+import { initPacts, pactsDaily, pactMods, onWar, earn, repOpinion } from './pacts.js';
 import { initSociety, buildProvinces, onNewNation, onSettled, onTransfer, societyDaily, fundInsurgents } from './society.js';
 import { UNITS, LINES, VARIANTS, bestOf, SETTLEMENTS, BUILDINGS, WONDERS, FOOD_PER_K } from './units.js';
 import { TECH, TECHS, available, ageProgress, ADVANCE_SHARE, techsBefore, AGE_TECHS } from './tech.js';
@@ -33,10 +34,11 @@ export class Sim {
     this.w = world; this.geo = geo;
     this.listeners = []; this.unitById = new Map(); this.shots = []; this.battles = [];
     this.buildStatic();
-    if (opts.state) { this.s = opts.state; this.migrate(); this.rebuildCaches(); initSociety(this); for (const N of Object.values(this.s.nations)) if (N.alive) { computeMods(this.s, N); this.recalcNation(N.code); } return; }
+    if (opts.state) { this.s = opts.state; this.migrate(); this.rebuildCaches(); initSociety(this); initPacts(this); for (const N of Object.values(this.s.nations)) if (N.alive) { computeMods(this.s, N); this.recalcNation(N.code); } return; }
     this.s = this.initState(opts);
     this.rebuildCaches();
     initSociety(this);
+    initPacts(this);
     for (const N of Object.values(this.s.nations)) { computeMods(this.s, N); this.recalcNation(N.code); }
   }
 
@@ -269,9 +271,11 @@ export class Sim {
   setRel(a, b, st) { this._rx = null; if (st === 'peace') delete this.s.rel[pkey(a, b)]; else this.s.rel[pkey(a, b)] = st; }
   atWar(a, b) { return a !== b && this.s.rel[pkey(a, b)] === 'war'; }
   friendly(a, b) { if (a === b) return true; return this.rel(a, b) === 'alliance'; }
-  opinion(a, b) { return this.s.opinion[a]?.[b] ?? 0; }
+  // what a thinks of b: memory of past deeds, coloured by b's reputation as a judges it (pacts.js)
+  opinion(a, b) { const raw = this.s.opinion[a]?.[b] ?? 0; return this.s.pacts ? clamp(raw + repOpinion(this, a, b), -100, 100) : raw; }
+  rawOpinion(a, b) { return this.s.opinion[a]?.[b] ?? 0; }
   setOpinion(a, b, v) { (this.s.opinion[a] ||= {})[b] = clamp(v, -100, 100); }
-  addOpinion(a, b, d) { this.setOpinion(a, b, this.opinion(a, b) + d); }
+  addOpinion(a, b, d) { this.setOpinion(a, b, this.rawOpinion(a, b) + d); }
   knows(a, b) { return a === b || !!this.s.nations[a]?.known?.includes(b); }
   regionsOf(c) { const set = this.owned.get(c); return set ? [...set].map(i => this.s.regions[i]) : []; }
   unitsOf(c) { return this.s.units.filter(u => u.nation === c); }
@@ -1003,6 +1007,7 @@ export class Sim {
     for (const N of Object.values(s.nations)) {
       if (!N.alive) continue;
       computeMods(s, N);
+      pactMods(this, N);
       const st = this.recalcNation(N.code);
       const m = N.mods;
       for (const k of STOCKS) {
@@ -1065,6 +1070,7 @@ export class Sim {
     pressureDaily(this);
     societyDaily(this);
     crisesDaily(this);
+    pactsDaily(this);
     // native peoples grow slowly
     if (s.t % (24 * 5) === 0) for (const i of this.landIdx) { const r = s.regions[i]; if (!r.owner) { const cap = 2.2 * this.T[i].hab * (this.T[i].river ? 1.4 : 1); r.natives = Math.min(cap, (r.natives || 0) + 0.02 * cap); } }
     this.emergence();
@@ -1368,7 +1374,7 @@ export class Sim {
     const prev = this.rel(a, b);
     this.setRel(a, b, 'war');
     this.addOpinion(b, a, -60);
-    if (!quiet) addInfamy(this, a, 1); // wars of choice are remembered
+    if (!quiet) { addInfamy(this, a, 1); earn(this, a, 'warmonger', 6); } // wars of choice are remembered
     for (const c of this.s.nations[b].known || []) if (c !== a && c !== b) this.addOpinion(c, a, prev === 'alliance' || prev === 'nap' ? -20 : -5);
     this.s.trades = this.s.trades.filter(t => !((t.from === a && t.to === b) || (t.from === b && t.to === a)));
     if (!quiet) this.emit('war', `The ${this.nm(a)} declare war on the ${this.nm(b)}${prev === 'nap' || prev === 'alliance' ? ', breaking their treaty' : ''}.`, [a, b], { loc: this.s.nations[b].capital });
@@ -1381,7 +1387,8 @@ export class Sim {
       if (Math.random() < (bound || (guar ? 0.75 : this.s.nations[ally].traits.loyalty * 0.8)) + this.opinion(ally, b) / 300) {
         this.setRel(ally, a, 'war'); this.addOpinion(a, ally, -40);
         this.emit('war', `The ${this.nm(ally)} ${bound > 1 ? 'answer their overlord\'s call' : bound ? 'defend their vassal' : guar ? 'honour their guarantee' : 'honour their alliance'} and declare war on the ${this.nm(a)}.`, [ally, a], { loc: this.s.nations[a].capital });
-      }
+        earn(this, ally, 'steadfast', 8);
+      } else if (!bound) earn(this, ally, 'oathbreaker', 6); // left a friend to fight alone
     }
     // an overlord's vassals march with it
     for (const v of this.vassalsOf(a)) {
@@ -1390,6 +1397,7 @@ export class Sim {
       this.setRel(v, b, 'war');
       this.emit('war', `The ${this.nm(v)} follow their overlord into war against the ${this.nm(b)}.`, [v, b], { loc: this.s.nations[b].capital });
     }
+    onWar(this, a, b, prev); // reputation, and the pacts: peace among members, an attack on one is an attack on all
   }
   makePeace(a, b, quiet = false) {
     this.setRel(a, b, 'peace');
@@ -1506,7 +1514,7 @@ export class Sim {
   }
   guarantee(by, of) {
     if (this.s.guarantees.some(g => g.by === by && g.of === of)) return { ok: false, why: 'Already guaranteed.' };
-    this.s.guarantees.push({ by, of }); this.addOpinion(of, by, 20);
+    this.s.guarantees.push({ by, of }); this.addOpinion(of, by, 20); earn(this, by, 'steadfast', 3); earn(this, by, 'peacemaker', 3);
     this.emit('treaty', `The ${this.nm(by)} guarantee the independence of the ${this.nm(of)}.`, [by, of]);
     return { ok: true };
   }
@@ -1519,10 +1527,10 @@ export class Sim {
     this.emit('treaty', `The ${this.nm(by)} send ${Math.round(amount)} ${good} to the ${this.nm(to)}.`, [by, to]);
     return { ok: true };
   }
-  mediate(by, a, b) {
+  mediate(by, a, b, bonus = 0) {
     const s = this.s, A = s.nations[a], B = s.nations[b], m = s.nations[by].mods;
-    const p = clamp(0.2 + (this.opinion(a, by) + this.opinion(b, by)) / 400 + (A.exhaustion + B.exhaustion) * 0.6 + (m.diplo || 0) * 0.5, 0.05, 0.9);
-    if (Math.random() < p) { this.makePeace(a, b); this.addOpinion(a, by, 10); this.addOpinion(b, by, 10); return { ok: true, why: `Talks succeed. The ${this.nm(a)} and the ${this.nm(b)} make peace.` }; }
+    const p = clamp(0.2 + (this.opinion(a, by) + this.opinion(b, by)) / 400 + (A.exhaustion + B.exhaustion) * 0.6 + (m.diplo || 0) * 0.5 + bonus, 0.05, 0.9);
+    if (Math.random() < p) { this.makePeace(a, b); this.addOpinion(a, by, 10); this.addOpinion(b, by, 10); earn(this, by, 'peacemaker', 12); return { ok: true, why: `Talks succeed. The ${this.nm(a)} and the ${this.nm(b)} make peace.` }; }
     this.addOpinion(a, by, -2); this.addOpinion(b, by, -2);
     return { ok: false, why: 'Talks collapse. Neither side is ready to stop fighting.' };
   }
@@ -1543,7 +1551,8 @@ export class Sim {
     const ratio = this.power(by) / (this.power(from) + 1);
     const t = s.nations[from].traits;
     const p = clamp((ratio - 2.5) / 4 + t.caution * 0.2 - t.aggression * 0.2, 0, 0.85);
-    if (Math.random() < p) { this.transfer(r, by, true); this.addOpinion(from, by, -45); return { ok: true, why: `The ${this.nm(from)} yield ${this.w.regions[i].name} under pressure.` }; }
+    earn(this, by, 'tyrant', 4);
+    if (Math.random() < p) { this.transfer(r, by, true); this.addOpinion(from, by, -45); earn(this, by, 'tyrant', 4); return { ok: true, why: `The ${this.nm(from)} yield ${this.w.regions[i].name} under pressure.` }; }
     this.addOpinion(from, by, -20);
     return { ok: false, why: `The ${this.nm(from)} reject the ultimatum.` };
   }
@@ -1552,14 +1561,14 @@ export class Sim {
     const ratio = this.power(by) / (this.power(from) + 1);
     const p = clamp((ratio - 1.8) / 3 + F.traits.caution * 0.25 - F.traits.aggression * 0.2 - this.opinion(from, by) / -300, 0, 0.9);
     if ((F[good] || 0) < amount) return { ok: false, why: `They do not have ${Math.round(amount)} ${good}.` };
-    if (Math.random() < p) { F[good] -= amount; s.nations[by][good] += amount; this.addOpinion(from, by, -25); this.emit('treaty', `The ${this.nm(from)} pay tribute of ${Math.round(amount)} ${good} to the ${this.nm(by)}.`, [by, from]); return { ok: true, why: `The ${this.nm(from)} pay the tribute.` }; }
+    if (Math.random() < p) { F[good] -= amount; s.nations[by][good] += amount; this.addOpinion(from, by, -25); earn(this, by, 'tyrant', 5); this.emit('treaty', `The ${this.nm(from)} pay tribute of ${Math.round(amount)} ${good} to the ${this.nm(by)}.`, [by, from]); return { ok: true, why: `The ${this.nm(from)} pay the tribute.` }; }
     this.addOpinion(from, by, -12);
     return { ok: false, why: `The ${this.nm(from)} refuse to pay.` };
   }
   shareTech(by, to, id) {
     const T = this.s.nations[to]; if (T.techs[id]) return { ok: false, why: 'They already know it.' };
     if (!TECH[id].req.every(q => T.techs[q]) || TECH[id].age > T.age) return { ok: false, why: 'They are not ready for it.' };
-    T.techs[id] = 1; computeMods(this.s, T); this.addOpinion(to, by, 15);
+    T.techs[id] = 1; computeMods(this.s, T); this.addOpinion(to, by, 15); earn(this, by, 'scholar', 6);
     this.emit('treaty', `The ${this.nm(by)} share the secrets of ${TECH[id].name} with the ${this.nm(to)}.`, [by, to]);
     return { ok: true };
   }

@@ -7,6 +7,8 @@ import { AGES, ageScale } from './eras.js';
 import { UNITS, SPEEDS, SETTLEMENTS } from './units.js';
 import { modelFor } from './unitmodels.js';
 import { initFloatPanel } from './floatpanel.js';
+import { openSessionDialog } from './pacts-ui.js';
+import { pactById } from './pacts.js';
 import { TERRAIN, RES, classify, generateDeposits, rng, known } from './resources.js';
 import { styleName, resolveEvent } from './gov.js';
 import { civColor } from './names.js';
@@ -32,7 +34,7 @@ async function boot() {
   G.globe.initUnits();
   await G.globe.load();
   G.globe.setSunHours(SUN0, 0);
-  Object.assign(G.fn, { openImperial, renderPanel, answer, openDossier, selectRegion, computeStacks, renderSelbar, updateRings, refreshWorld, setSpeed, orderTo, selectedUnits, airborne, flyTile, showSetup, save, eta, renderTop });
+  Object.assign(G.fn, { openImperial, renderPanel, switchTab, answer, openDossier, selectRegion, computeStacks, renderSelbar, updateRings, refreshWorld, setSpeed, orderTo, selectedUnits, airborne, flyTile, showSetup, save, eta, renderTop });
   bindInput();
   bindChrome();
   initFloatPanel();
@@ -229,7 +231,7 @@ function refreshWorld(force) {
   for (const r of s.regions) {
     const hl = r.i === G.region ? 0.9 : r.i === G.hover ? 0.35 : 0;
     if (r.sea) { globe.setRegion(r.i, { alpha: 0, highlight: hl, light: 0, glow: 0 }); continue; }
-    if (G.lens && (r.owner || (r.natives || 0) > 0.05) && !(G.lens === 'unrest' && !r.owner)) {
+    if (G.lens && (r.owner || (r.natives || 0) > 0.05) && !((G.lens === 'unrest' || G.lens === 'pacts') && !r.owner)) {
       globe.setRegion(r.i, { color: lensColor(r), alpha: r.owner ? 0.55 : 0.3, highlight: hl, light: 0, glow: r.owner ? Math.min(0.95, 0.1 + r.lvl * 0.12) * (1 - r.damage) : 0.05, contested: r.revolt ? 0.9 : r.capture ? Math.min(1, 0.4 + r.capture.p) : 0 });
       continue;
     }
@@ -698,6 +700,13 @@ function onEvent(e) {
   const sim = G.sim, s = sim.s;
   if (e.kind === 'message') { const m = e.msg; toast(`${sim.nm(m.from)} · ${m.proposal ? 'Proposal' : 'Envoy'}`, m.text, m.proposal ? 'prop' : '', () => openDossier(m.from), m.proposal ? m : null); return; }
   if (e.kind === 'rp') { G.fn.showEvent(e.ev); return; }
+  if (e.kind === 'pactSession') {
+    const X = pactById(sim, e.pact); if (!X) return;
+    const busy = [...document.querySelectorAll('.modal')].some(m => !m.classList.contains('hidden'));
+    if (!busy) openSessionDialog(X.id);
+    else toast(X.name, `The ${X.name} convenes. Your vote is awaited.`, 'prop', () => openSessionDialog(X.id));
+    return;
+  }
   const mine = e.nations?.includes(s.player);
   if (e.loc !== undefined && ['capture', 'war', 'terror'].includes(e.kind)) { const R = G.world.regions[e.loc]; G.globe.flash(R.lat, R.lon, e.kind === 'capture' ? 0xff8a3d : 0xff3344); }
   const go = () => { if (e.loc !== undefined) { flyTile(e.loc); selectRegion(e.loc); } };

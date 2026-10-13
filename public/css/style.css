@@ -477,3 +477,36 @@ table.stocks td { padding: 4px; border-top: 1px solid var(--line); }
 .pn-rz-bl { left: 0; bottom: 0; width: 12px; height: 12px; cursor: nesw-resize; }
 .pn-rz-br { right: 0; bottom: 0; width: 12px; height: 12px; cursor: nwse-resize; background: linear-gradient(135deg, transparent 55%, var(--muted) 56%, transparent 62%, transparent 72%, var(--muted) 73%, transparent 79%); opacity: .6; }
 .pn-rz:hover { background-color: rgba(233,196,106,.18); }
+
+/* ---------------------------------------------------------------- reputation and pacts */
+.rep-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.rep-chip { font-size: 10.5px; font-weight: 600; padding: 1px 7px; border-radius: 10px; background: rgba(255,255,255,.06); border: 1px solid var(--line-2); color: var(--text); white-space: nowrap; cursor: help; }
+.rep-chip.renowned { border-color: var(--gold-dim); color: var(--gold-2); background: rgba(233,196,106,.1); }
+.rep-row { display: grid; grid-template-columns: 1fr 90px; gap: 8px; align-items: center; padding: 4px 0; font-size: 12.5px; }
+.rep-bar { height: 6px; border-radius: 3px; background: rgba(255,255,255,.08); overflow: hidden; }
+.rep-bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--gold-dim), var(--gold)); }
+.gold { color: var(--gold-2); }
+.pact-link { cursor: pointer; text-decoration: underline dotted; }
+.doc-row { padding: 5px 0; border-bottom: 1px solid var(--line); font-size: 12.5px; }
+.doc-row:last-child { border-bottom: 0; }
+.vote-log { padding: 6px 8px; margin-bottom: 5px; border-radius: 6px; border-left: 3px solid var(--muted); background: rgba(255,255,255,.025); font-size: 12px; line-height: 1.45; }
+.vote-log.pass { border-left-color: var(--green); } .vote-log.fail { border-left-color: var(--red); }
+.pact-card { width: min(760px, 94vw); }
+.pact-card h2 { margin: 2px 0 8px; color: var(--text-hi); }
+.pact-card .ek { color: var(--gold); font-weight: 700; letter-spacing: 1.2px; font-size: 11px; text-transform: uppercase; }
+.preset-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; margin-top: 10px; }
+.preset { text-align: left; display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; border-radius: 9px; border: 1px solid var(--line-2); border-left: 3px solid var(--pc); background: rgba(255,255,255,.03); color: var(--text); cursor: pointer; font-size: 12px; }
+.preset b { color: var(--text-hi); font-size: 13px; } .preset span { color: var(--muted); }
+.preset.on { background: color-mix(in srgb, var(--pc) 16%, transparent); border-color: var(--pc); }
+.doc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 6px; margin-top: 12px; }
+.doc-opt { display: grid; grid-template-columns: auto 1fr; column-gap: 8px; padding: 7px 9px; border-radius: 8px; border: 1px solid var(--line); background: rgba(255,255,255,.02); cursor: pointer; font-size: 12px; }
+.doc-opt input { grid-row: span 2; margin-top: 2px; } .doc-opt span { color: var(--muted); font-size: 11.5px; }
+.doc-opt.on { border-color: var(--gold-dim); background: rgba(233,196,106,.07); }
+.motion-opt { display: flex; flex-direction: column; gap: 3px; width: 100%; text-align: left; padding: 10px 12px; margin-bottom: 7px; border-radius: 9px; border: 1px solid var(--line-2); background: rgba(255,255,255,.03); color: var(--text); cursor: pointer; font-size: 12.5px; }
+.motion-opt:hover { border-color: var(--gold-dim); background: rgba(233,196,106,.08); }
+.motion-opt b { color: var(--text-hi); font-size: 14px; }
+.chamber-svg { display: block; width: min(420px, 100%); margin: 6px auto; }
+.vote-list { max-height: 200px; overflow-y: auto; margin: 6px 0; }
+.vote-list .row { padding: 4px 2px; font-size: 12.5px; }
+.pact-card .sticky-foot { position: sticky; bottom: -22px; margin: 14px -26px -22px; padding: 12px 26px; display: flex; justify-content: flex-end; gap: 8px; background: linear-gradient(180deg, rgba(12,18,30,.9), rgba(9,14,24,.99)); border-top: 1px solid var(--line); }
+.vote-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 8px; }
