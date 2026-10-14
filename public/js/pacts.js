@@ -89,7 +89,7 @@ export function pactName(sim, founder, preset) {
 }
 export const pactsOf = (sim, c) => (sim.s.pacts || []).filter(P => P.members.includes(c));
 export const pactById = (sim, id) => (sim.s.pacts || []).find(P => P.id === id);
-const shares = (sim, a, b, doc) => (sim.s.pacts || []).some(P => P.doctrines[doc] && P.members.includes(a) && P.members.includes(b));
+export const shares = (sim, a, b, doc) => (sim.s.pacts || []).some(P => P.doctrines[doc] && P.members.includes(a) && P.members.includes(b));
 
 export function initPacts(sim) {
   const s = sim.s;
