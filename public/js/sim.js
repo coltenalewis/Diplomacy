@@ -6,7 +6,7 @@ import { AGES, NAGES, ageScale, YEARS_PER_DAY } from './eras.js';
 import { TERRAIN, RES, IMPROVEMENTS, IMP_ORDER, IMP_CAP, LABOR, STRATEGIC, LUXURIES, classify, generateDeposits, rng, known } from './resources.js';
 import { pressureDaily, onAcquire, addInfamy } from './pressure.js';
 import { crisesDaily, applyScenario } from './crises.js';
-import { initPacts, pactsDaily, pactMods, onWar, earn, repOpinion } from './pacts.js';
+import { initPacts, pactsDaily, pactMods, onWar, earn, repOpinion, shares } from './pacts.js';
 import { initSociety, buildProvinces, onNewNation, onSettled, onTransfer, societyDaily, fundInsurgents } from './society.js';
 import { UNITS, LINES, VARIANTS, bestOf, SETTLEMENTS, BUILDINGS, WONDERS, FOOD_PER_K } from './units.js';
 import { TECH, TECHS, available, ageProgress, ADVANCE_SHARE, techsBefore, AGE_TECHS } from './tech.js';
@@ -271,6 +271,14 @@ export class Sim {
   setRel(a, b, st) { this._rx = null; if (st === 'peace') delete this.s.rel[pkey(a, b)]; else this.s.rel[pkey(a, b)] = st; }
   atWar(a, b) { return a !== b && this.s.rel[pkey(a, b)] === 'war'; }
   friendly(a, b) { if (a === b) return true; return this.rel(a, b) === 'alliance'; }
+  // right of passage: armies may march through, base in and help defend the lands of allies, of every people in
+  // their realm (vassals, overlord, fellow vassals) and of fellow members of a mutual-defence pact
+  mayPass(a, b) {
+    if (!a || !b) return false;
+    if (a === b || this.rel(a, b) === 'alliance') return true;
+    if (this.realmOf(a) === this.realmOf(b)) return true;
+    return !!this.s.pacts?.length && shares(this, a, b, 'defense');
+  }
   // what a thinks of b: memory of past deeds, coloured by b's reputation as a judges it (pacts.js)
   opinion(a, b) { const raw = this.s.opinion[a]?.[b] ?? 0; return this.s.pacts ? clamp(raw + repOpinion(this, a, b), -100, 100) : raw; }
   rawOpinion(a, b) { return this.s.opinion[a]?.[b] ?? 0; }
@@ -322,9 +330,9 @@ export class Sim {
   canEnter(c, domain, j, T) {
     const R = this.w.regions[j], r = this.s.regions[j];
     if (domain === 'sea') return R.sea && (!R.deep || !!T?.ocean);
-    if (domain === 'land') { if (R.sea) return !R.deep || this.canOcean(c); const o = r.owner; return !o || o === c || this.friendly(c, o) || this.atWar(c, o); }
+    if (domain === 'land') { if (R.sea) return !R.deep || this.canOcean(c); const o = r.owner; return !o || this.mayPass(c, o) || this.atWar(c, o); }
     if (R.sea) return false;
-    return r.owner === c || this.friendly(c, r.owner);
+    return this.mayPass(c, r.owner);
   }
   planPath(units, dest) {
     const w = this.w, c = units[0].nation;
@@ -346,10 +354,10 @@ export class Sim {
       const R = w.regions[j];
       if (R.sea) return canSea && (!R.deep || ocean);
       const o = this.s.regions[j].owner;
-      return !o || o === c || this.friendly(c, o) || this.atWar(c, o) || j === dest;
+      return !o || this.mayPass(c, o) || this.atWar(c, o) || j === dest;
     }, (i, j, km) => km * (w.regions[j].sea ? 2.4 : TERRAIN[this.T[j].terrain]?.move || 1));
     if (!path) return { path: null, reason: canSea ? 'No route.' : 'No land route. Research Rafts to cross water.' };
-    for (const j of path) { const o = this.s.regions[j].owner; if (!w.regions[j].sea && o && o !== c && !this.friendly(c, o) && !this.atWar(c, o)) blockers.add(o); }
+    for (const j of path) { const o = this.s.regions[j].owner; if (!w.regions[j].sea && o && !this.mayPass(c, o) && !this.atWar(c, o)) blockers.add(o); }
     if (path.some(j => w.regions[j].sea) && this.embarked(c) + units.length > this.sealift(c)) return { path: null, reason: `Insufficient sealift (${this.sealift(c)} capacity). Build boats or transports.` };
     return { path, blockers };
   }
@@ -422,7 +430,7 @@ export class Sim {
       const T = UNITS[u.type], A = u.air;
       const fly = T.speed * unitMods(s, u, 'air').speed;
       const baseOwner = s.regions[u.loc].owner;
-      if (!w.regions[u.loc].sea && baseOwner !== u.nation && !this.friendly(u.nation, baseOwner)) {
+      if (!w.regions[u.loc].sea && !this.mayPass(u.nation, baseOwner)) {
         const home = this.regionsOf(u.nation).sort((a, b) => kmBetween(this.anchor(a.i), u.pos) - kmBetween(this.anchor(b.i), u.pos))[0];
         if (home) { u.loc = home.i; A.phase = 'ferry'; A.pos ||= u.pos; A.tgt = this.slot(u, home.i); }
       }
@@ -600,7 +608,7 @@ export class Sim {
       if (!us) { r.capture.p = Math.max(0, r.capture.p - 0.04); if (r.capture.p <= 0) r.capture = null; continue; }
       let hostile, defenders = [], defAge;
       if (r.owner) {
-        defenders = us.filter(u => u.nation === r.owner || (this.friendly(u.nation, r.owner) && !us.some(e => this.atWar(e.nation, u.nation) && e.nation !== r.owner)));
+        defenders = us.filter(u => u.nation === r.owner || (this.mayPass(u.nation, r.owner) && !us.some(e => this.atWar(e.nation, u.nation) && e.nation !== r.owner)));
         hostile = us.filter(u => this.atWar(u.nation, r.owner));
         defAge = s.nations[r.owner].age;
       } else {
@@ -1045,7 +1053,7 @@ export class Sim {
       for (const u of s.units) if (u.nation === N.code && !u.fighting && u.hp < u.mhp && s.regions[u.loc]?.owner === N.code) u.hp = Math.min(u.mhp, u.hp + u.mhp * 0.03);
       // armies wintering away from home suffer the cold (never fatal on its own)
       for (const u of s.units) {
-        if (u.nation !== N.code || UNITS[u.type].domain !== 'land' || s.regions[u.loc]?.owner === N.code) continue;
+        if (u.nation !== N.code || UNITS[u.type].domain !== 'land' || this.mayPass(N.code, s.regions[u.loc]?.owner)) continue;
         const c = cold(this.w.regions[u.loc]?.lat || 0, s.t);
         if (c > 0.35) u.hp = Math.max(u.mhp * 0.25, u.hp - u.mhp * 0.015 * c);
       }
