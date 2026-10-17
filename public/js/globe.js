@@ -10,10 +10,12 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { ll2v, v2ll, slerpLL } from './world.js';
 import { RIVERS } from './resources.js';
 import { buildModels, MODEL_KEYS } from './unitmodels.js';
 import { buildProps, updateProps } from './props.js';
+import { Towns } from './towns.js';
 
 // All shaders work in display (sRGB) space; colour management is off so hex colours stay as authored.
 THREE.ColorManagement.enabled = false;
@@ -40,7 +42,7 @@ void main() {
 }`;
 const EARTH_FS = `
 uniform sampler2D dayTex, nightTex, waterTex, topoTex, coastTex, cloudTex, idxTex, palTex, scarTex, priorTex;
-uniform vec3 sunDir; uniform float time; uniform float overlay; uniform float cloudShift; uniform float cloudAmt; uniform float season; uniform float stylized;
+uniform vec3 sunDir; uniform float time; uniform float overlay; uniform float cloudShift; uniform float cloudAmt; uniform float season; uniform float stylized; uniform float haze;
 varying vec2 vUv; varying vec3 vN; varying vec3 vP;
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 // sine-free hash: stays well distributed for the large cell coordinates used by settlement lights
@@ -238,6 +240,13 @@ void main() {
   col = mix(col, vec3(1.0, 0.25, 0.22), pal2.a * stripes * (0.3 + 0.2 * sin(time * 4.0)));
   // ocean glint, fresnel, twilight band
   col += vec3(1.0, 0.42, 0.12) * exp(-pow(ndl * 9.0, 2.0)) * 0.07;
+  // aerial perspective: with the camera tilted toward the horizon, distant land fades into the sky's haze
+  if (haze > 0.0) {
+    float alt = length(cameraPosition) - 1.0;
+    float far = smoothstep(alt * 1.2, alt * 6.0 + 0.12, length(cameraPosition - vP));
+    vec3 hc = mix(vec3(0.6, 0.73, 0.9), vec3(1.0, 0.72, 0.5), exp(-pow(ndl * 5.0, 2.0)) * 0.7) * (0.12 + 0.8 * dayMix);
+    col = mix(col, hc, far * haze * 0.6);
+  }
   gl_FragColor = vec4(col, 1.0);
 }`;
 const CLOUD_FS = `
@@ -302,8 +311,36 @@ void main() {
   vec3 c = vCol * (amb + 0.85 * l * day) + (vCol * 0.35 + 0.08) * rim;
   gl_FragColor = vec4(c, 1.0);
 }`;
+// soft contact shadows under units
+const SHADOW_VS = `varying vec2 vUv; varying float vA; void main(){ vUv = uv; vA = instanceColor.r; gl_Position = projectionMatrix * viewMatrix * modelMatrix * instanceMatrix * vec4(position, 1.0); }`;
+const SHADOW_FS = `varying vec2 vUv; varying float vA; void main(){ float d = length(vUv - 0.5) * 2.0; gl_FragColor = vec4(0.0, 0.0, 0.0, (1.0 - smoothstep(0.15, 1.0, d)) * 0.45 * vA); }`;
 const RING_VS = `varying vec3 vC; void main(){ vC = instanceColor; gl_Position = projectionMatrix * viewMatrix * modelMatrix * instanceMatrix * vec4(position, 1.0); }`;
 const RING_FS = `varying vec3 vC; void main(){ gl_FragColor = vec4(vC, 1.0); }`;
+// final lens: a tilt-shift blur that turns the close-up world into a miniature, plus a gentle colour grade
+const LENS = {
+  uniforms: { tDiffuse: { value: null }, tilt: { value: 0 }, res: { value: new THREE.Vector2(1, 1) } },
+  vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+  fragmentShader: `uniform sampler2D tDiffuse; uniform float tilt; uniform vec2 res; varying vec2 vUv;
+    void main() {
+      vec4 c = texture2D(tDiffuse, vUv);
+      float b = smoothstep(0.1, 0.48, abs(vUv.y - 0.46)) * tilt;
+      if (b > 0.01) {
+        vec3 acc = c.rgb; float n = 1.0;
+        for (int i = 0; i < 12; i++) {
+          float a = float(i) * 2.39996, r = sqrt(float(i) + 0.5) / 3.5;
+          acc += texture2D(tDiffuse, vUv + vec2(cos(a), sin(a)) * r * b * 7.0 / res).rgb; n += 1.0;
+        }
+        c.rgb = acc / n;
+      }
+      float l = dot(c.rgb, vec3(0.299, 0.587, 0.114));
+      c.rgb = mix(vec3(l), c.rgb, 1.1);                                       // a touch more colour
+      c.rgb += (vec3(1.0, 0.97, 0.9) - 1.0) * smoothstep(0.4, 1.0, l) * 0.6;  // warm highlights
+      c.rgb += vec3(-0.004, 0.0, 0.012) * (1.0 - smoothstep(0.0, 0.35, l)); // cool shadows
+      vec3 cc = clamp(c.rgb, 0.0, 1.0);
+      c.rgb = mix(c.rgb, cc * cc * (3.0 - 2.0 * cc), 0.18);                   // gentle s-curve
+      gl_FragColor = c;
+    }`,
+};
 const FX_VS = `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`;
 
 export class Globe {
@@ -328,12 +365,15 @@ export class Globe {
     this.composer.addPass(new RenderPass(this.scene, this.camera));
     this.bloom = new UnrealBloomPass(new THREE.Vector2(W, H), 0.35, 0.45, 0.9);
     this.composer.addPass(this.bloom);
+    this.lens = new ShaderPass(LENS);
+    this.composer.addPass(this.lens);
     this.composer.addPass(new OutputPass());
     this.clock = new THREE.Clock();
     this.stylized = true;
     this.routes = new Map();
     this.lineMats = [];
     this.build();
+    this.towns = new Towns(this);
     window.addEventListener('resize', () => this.resize());
     if (window.ResizeObserver) new ResizeObserver(() => this.resize()).observe(this.container);
   }
@@ -457,7 +497,7 @@ export class Globe {
     const mat = new THREE.ShaderMaterial({
       vertexShader: TERRAIN_VS, fragmentShader: EARTH_FS,
       uniforms: { relief: { value: 0.0065 }, dayTex: { value: blank }, nightTex: { value: blank }, waterTex: { value: blank }, topoTex: { value: blank }, coastTex: { value: blank }, cloudTex: { value: blank }, priorTex: { value: blank },
-        idxTex: { value: idxTex }, idxSize: { value: new THREE.Vector2(idxTex.image.width, idxTex.image.height) }, palTex: { value: palTex }, scarTex: { value: this.scarTex }, sunDir, cloudShift, cloudAmt, season, stylized: { value: 1 }, time: { value: 0 }, overlay: { value: 1 } },
+        idxTex: { value: idxTex }, idxSize: { value: new THREE.Vector2(idxTex.image.width, idxTex.image.height) }, palTex: { value: palTex }, scarTex: { value: this.scarTex }, sunDir, cloudShift, cloudAmt, season, stylized: { value: 1 }, haze: { value: 0 }, time: { value: 0 }, overlay: { value: 1 } },
     });
     this.earth = new THREE.Mesh(new THREE.SphereGeometry(1, 720, 360), mat);
     scene.add(this.earth);
@@ -822,10 +862,24 @@ export class Globe {
     const px = (e[0] * x + e[4] * y + e[8] * z + e[12]) / w, py = (e[1] * x + e[5] * y + e[9] * z + e[13]) / w;
     return { x: (px + 1) / 2 * this._W, y: (1 - py) / 2 * this._H, visible, facing };
   }
+  // camera tilt at a distance, and how far ahead of the point beneath it the tilted camera looks (radians of arc)
+  tiltAt(d) { const k = Math.min(1, Math.max(0, (1.6 - d) / 0.48)); return this.tiltOn === false ? 0 : 0.86 * k * k * (3 - 2 * k); }
+  aheadAt(d) {
+    const th = this.tiltAt(d); if (th < 1e-4) return 0;
+    const c = Math.cos(th), disc = 1 - d * d * Math.sin(th) ** 2;
+    const t = disc > 0 ? d * c - Math.sqrt(disc) : d * c;
+    return Math.atan2(t * Math.sin(th), d - t * c);
+  }
+  // move a surface direction south (away from where the tilted camera looks) by an arc
+  southOf(n, arc) {
+    const nt = new THREE.Vector3(0, 1, 0).addScaledVector(n, -n.y); if (nt.lengthSq() < 1e-8) return n.clone(); nt.normalize();
+    return n.clone().multiplyScalar(Math.cos(arc)).addScaledVector(nt, -Math.sin(arc)).normalize();
+  }
   flyTo(lat, lon, dist) {
     const from = this.camera.position.clone();
     const d0 = from.length(), d1 = dist ?? d0;
-    const target = new THREE.Vector3(...ll2v(lat, lon, 1)).normalize();
+    // aim so that the place ends up in the middle of the (tilted) view
+    const target = this.southOf(new THREE.Vector3(...ll2v(lat, lon, 1)).normalize(), this.aheadAt(d1));
     const start = from.clone().normalize();
     const t0 = performance.now(), dur = 1200;
     this.anim = now => {
@@ -854,6 +908,8 @@ export class Globe {
     // selection and battle rings on the ground
     this.unitRings = inst(new THREE.RingGeometry(0.66, 0.8, 32).rotateX(-Math.PI / 2), new THREE.ShaderMaterial({ vertexShader: RING_VS, fragmentShader: RING_FS, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
     this.unitRings.renderOrder = 7;
+    this.unitShadows = inst(new THREE.CircleGeometry(0.5, 20).rotateX(-Math.PI / 2), new THREE.ShaderMaterial({ vertexShader: SHADOW_VS, fragmentShader: SHADOW_FS, transparent: true, depthWrite: false }));
+    this.unitShadows.renderOrder = 6;
     this.unitState = new Map(); this.ghosts = []; this._uFrame = 0;
     // trails (aircraft & ships)
     const tg = new THREE.BufferGeometry();
@@ -885,7 +941,8 @@ export class Globe {
     const camD = cam.length(), close = 1 + 0.5 * Math.min(1, Math.max(0, (1.6 - camD) / 0.5));
     const cr = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 0); // screen right
     const counts = {}; for (const k of MODEL_KEYS) counts[k] = 0;
-    let nr = 0;
+    let nr = 0, ns = 0;
+    const SM = this.unitShadows.instanceMatrix.array, SC = this.unitShadows.instanceColor.array;
     const rings = this.unitRings, RM = rings.instanceMatrix.array, RC = rings.instanceColor.array;
     const write = (model, R, U, F, px, py, pz, sc, col) => {
       const m = this.models[model], i = counts[model]++; if (i >= this.maxUnits) return;
@@ -973,6 +1030,18 @@ export class Globe {
       const pz = pz0 + r2 * fx + F[2] * (fz + fo * ws) + U[2] * bob * ws + ez * sl;
       write(model, R, U, F, px, py, pz, ws * sc, u.color);
       const L = st.last; L.set(R, 0); L.set(U, 3); L.set(F, 6); L[9] = px; L[10] = py; L[11] = pz; L[12] = ws; L[13] = u.color[0]; L[14] = u.color[1]; L[15] = u.color[2];
+      // a soft shadow on the ground beneath (fainter and smaller under aircraft)
+      if (ns < this.maxUnits) {
+        basis(up, st.h, 0, 0);
+        const gr = sea ? 1.0003 : 1.0003 + this.heightAt(u.lat, u.lon), q = ws * (air ? 0.6 : 1.05) * sc, o = ns * 16;
+        let ox = px - px0, oy = py - py0, oz = pz - pz0; const vd = ox * up[0] + oy * up[1] + oz * up[2]; ox -= up[0] * vd; oy -= up[1] * vd; oz -= up[2] * vd; // stays on the ground as the unit bobs
+        const gx = up[0] * gr + ox, gy = up[1] * gr + oy, gz = up[2] * gr + oz;
+        SM[o] = R[0] * q; SM[o + 1] = R[1] * q; SM[o + 2] = R[2] * q; SM[o + 3] = 0;
+        SM[o + 4] = U[0] * q; SM[o + 5] = U[1] * q; SM[o + 6] = U[2] * q; SM[o + 7] = 0;
+        SM[o + 8] = F[0] * q; SM[o + 9] = F[1] * q; SM[o + 10] = F[2] * q; SM[o + 11] = 0;
+        SM[o + 12] = gx; SM[o + 13] = gy; SM[o + 14] = gz; SM[o + 15] = 1;
+        SC[ns * 3] = air ? 0.45 : sea ? 0.6 : 1; ns++;
+      }
       // rings: white for the selection, pulsing red in battle
       if ((sel || fight) && nr < this.maxUnits) {
         basis(up, st.h, 0, 0);
@@ -1003,6 +1072,7 @@ export class Globe {
       if (m.count) { m.instanceMatrix.needsUpdate = true; m.instanceColor.needsUpdate = true; }
     }
     rings.count = nr; if (nr) { rings.instanceMatrix.needsUpdate = true; rings.instanceColor.needsUpdate = true; }
+    this.unitShadows.count = ns; if (ns) { this.unitShadows.instanceMatrix.needsUpdate = true; this.unitShadows.instanceColor.needsUpdate = true; }
     this.unitMat.uniforms.time.value = t;
   }
   // trails: [{pts:[[lat,lon,alt],...], color:[r,g,b]}]
@@ -1043,13 +1113,28 @@ export class Globe {
   tick() {
     const dt = Math.min(0.1, this.clock.getDelta());
     const t = this.clock.elapsedTime;
+    const flying = !!this.anim; // a flight sets the camera itself, through its final frame
     if (this.anim) this.anim(performance.now());
     const d = this.distance();
     this.controls.rotateSpeed = Math.min(1, (d - 1) * 0.5 + 0.04);
     this.controls.update();
+    // zoomed in, the camera tips toward the horizon like a strategy-game camera; far out it looks straight down.
+    // As the tilt changes with zoom, the camera slides back so the place in the middle of the view stays put.
+    const tilt = this.tiltAt(d), ahead = this.aheadAt(d);
+    if (!flying && this._ahead !== undefined && Math.abs(ahead - this._ahead) > 1e-7) {
+      const n = this.southOf(this.camera.position.clone().normalize(), ahead - this._ahead);
+      this.camera.position.copy(n.multiplyScalar(d)); this.camera.lookAt(this.controls.target);
+    }
+    this._ahead = ahead;
+    if (tilt > 0.001) { this.camera.rotateX(tilt); this.camera.updateMatrixWorld(); }
+    this.tilt = tilt;
+    this.earth.material.uniforms.haze.value = tilt / 0.86;
+    this.lens.uniforms.tilt.value = this.lensOn === false ? 0 : tilt / 0.86;
+    this.lens.uniforms.res.value.set(this.container.clientWidth, this.container.clientHeight);
     if (this.alwaysDay) this.u.sunDir.value.copy(this.camera.position).normalize().add(new THREE.Vector3(0, 0.25, 0)).normalize();
     this.earth.material.uniforms.time.value = t;
     updateProps(this.props, this.camera);
+    this.towns.update(this.camera);
     for (const line of this.routeGroup.children) if (line.material.dashed) line.material.dashOffset -= 0.05 * dt;
     for (const line of this.pathGroup.children) line.material.dashOffset -= 0.02 * dt;
     for (const m of [...this.fxGroup.children]) {

@@ -202,6 +202,7 @@ function frame(now) {
   G.globe.tick();
   if (sim) {
     if (now - G.lastStacks > 200) { computeStacks(); G.lastStacks = now; }
+    if (!(now - (G.lastTowns || 0) < 1000)) { G.lastTowns = now; syncTowns(); }
     drawUnits();
     placeLabels();
     placeIcons(now);
@@ -293,6 +294,17 @@ function drawUnits() {
   g.setUnits(list);
   g.setTrails(trailList);
   placeMarkers();
+}
+// 3D settlements: every owned land with a settlement, styled by its people's age
+function syncTowns() {
+  const sim = G.sim, s = sim.s, list = [];
+  for (const r of s.regions) {
+    if (!r.owner || !r.lvl) continue;
+    const R = G.world.regions[r.i], N = s.nations[r.owner]; if (!N) continue;
+    const [lat, lon] = R.city || [R.lat, R.lon];
+    list.push({ i: r.i, lat, lon, lvl: r.lvl, age: N.age, color: hexRGB(sim.col(r.owner)), cap: N.capital === r.i });
+  }
+  G.globe.towns.sync(list);
 }
 function computeStacks() {
   const s = G.sim.s, w = G.world;
