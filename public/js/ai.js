@@ -228,6 +228,7 @@ export class AI {
   }
   government(c) {
     const sim = this.sim, N = sim.s.nations[c], t = N.traits;
+    if (sim.s.modern) return; // real states do not swap their political system on a whim; coups and revolutions still happen
     const cur = GOV_TYPES[N.gov.type];
     if (N.gov.pc < reformCost(N) || (N.gov.stability < 0.4 && !cur.coupOnly)) return;
     const fit = k => { const G = GOV_TYPES[k]; let v = G.age * 2; if (G.democratic) v += (t.science - t.aggression) * 2; if (['empire', 'autocracy', 'feudal', 'despotism', 'chiefdom'].includes(k)) v += t.aggression * 2; if (['monarchy', 'constmon', 'absolute'].includes(k)) v += t.caution * 1.5; if (k === 'theocracy') v += t.caution; if (k === 'technocracy') v += t.science * 3; if (k === 'merchant') v += 1; return v; };
@@ -368,7 +369,11 @@ export class AI {
         if (rel === 'nap') sc -= 1.2 * t.loyalty;
         if (o === s.player) sc += Math.max(0, s.difficulty || 0) * 0.8 + (sim.score(o) > sim.score(c) * 1.3 ? 0.35 : -0.1); // a rising player draws rivals
         sc += (s.nations[o].infamy || 0) / 20 - (N.infamy || 0) / 12; // the infamous make tempting targets; our own infamy counsels restraint
-        sc += warAffinity(sim, c, o); // holy cities and kin under foreign rule
+        const aff = warAffinity(sim, c, o); // holy cities and kin under foreign rule
+        sc += aff;
+        // the modern order: wars only against real rivals or over kin and holy ground, and only with clear odds
+        if (s.modern && sim.opinion(c, o) > -35) continue;
+        if (s.modern) sc -= 1.2 + (s.nations[o].warheads ? 3.5 : 0) + (pactsOf(sim, o).some(P => P.doctrines.defense && !P.members.includes(c)) ? 1.5 : 0) + (sim.alliesOf(o).some(a => s.nations[a]?.warheads) ? 2.5 : 0); // deterrence: the bomb, the alliance and the nuclear umbrella
         if (sc > bs) { bs = sc; best = o; }
       }
       if (best && bs > 2.2) sim.declareWar(c, best);
@@ -392,6 +397,7 @@ export class AI {
       void O;
       return;
     }
+    if (s.modern) return; // no new vassal states in the modern world, and no feudal courts
     if (N.ai && sim.vassalsOf(c).length) aiImperialCourt(sim, this, c);
     for (const v of sim.vassalsOf(c)) if (N.ai && sim.canIntegrate(c, v).ok && (sim.owned.get(v)?.size || 0) <= 4 && Math.random() < 0.05 + t.expansion * 0.08) sim.integrateVassal(c, v);
     if (!N.ai) return;

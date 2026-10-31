@@ -31,6 +31,7 @@ export const GOV_TYPES = {
 export function govAvailable(N, k) { const G = GOV_TYPES[k]; return !G.coupOnly && G.age <= N.age && (!G.tech || !!N.techs[G.tech]); }
 export function styleName(N) {
   if (N.formed) return N.formed.title;
+  if (N.official) return N.official; // a real country's formal name
   const G = GOV_TYPES[N.gov?.type || 'tribe'];
   return G.fmt.replace('{name}', N.name).replace('{adj}', N.adj);
 }
@@ -269,9 +270,10 @@ export function politicsDaily(sim, N) {
   g.pc = Math.min(400, g.pc + (0.5 * G.pc * (0.5 + g.stability) + m.pc) * hostile);
   // elections
   if (G.democratic) {
-    if (!g.nextElection) g.nextElection = s.t + (G.election || 90) * 24;
+    const term = s.modern ? 365 * (G.term || 4) : (G.election || 90); // modern terms run years, not seasons
+    if (!g.nextElection) g.nextElection = s.t + term * 24;
     if (s.t >= g.nextElection) {
-      g.nextElection = s.t + (G.election || 90) * 24;
+      g.nextElection = s.t + term * 24;
       const won = g.approval + rnd(-0.08, 0.08) >= 0.48;
       if (won) { g.pc += 60; g.stability = clamp(g.stability + 0.08, 0, 1); }
       else { g.hostileUntil = s.t + 40 * 24; g.stability = clamp(g.stability - 0.05, 0, 1); }

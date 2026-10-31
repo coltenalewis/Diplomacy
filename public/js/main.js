@@ -9,8 +9,10 @@ import { modelFor } from './unitmodels.js';
 import { initFloatPanel } from './floatpanel.js';
 import { openSessionDialog } from './pacts-ui.js';
 import { pactById } from './pacts.js';
+import { COUNTRIES, P5, WARS, FAITHS_2025 } from './countries.js';
+import { territories, countryByName, devOf, theOfficial } from './modern.js';
 import { TERRAIN, RES, classify, generateDeposits, rng, known } from './resources.js';
-import { styleName, resolveEvent } from './gov.js';
+import { styleName, resolveEvent, GOV_TYPES } from './gov.js';
 import { civColor } from './names.js';
 import { G, $, esc, fmt, sgn, pct, popStr, toast, dstr, ICON, hexRGB, STOCK_ICON, setHTML } from './ui.js';
 import { renderPanel, switchTab, openDossier, answer, renderTicker } from './panels.js';
@@ -21,7 +23,7 @@ import { SCENARIOS } from './crises.js';
 import { seasonName, SEASON_ICON, cold } from './seasons.js';
 
 const SAVE_KEY = 'agesofcommand.v1';
-const SUN0 = Date.UTC(2030, 2, 20, 6, 0, 0);
+const SUN0 = Date.UTC(2025, 0, 1, 6, 0, 0); // game hour 0: dawn over Greenwich, 1 January 2025
 const SETTLE_GLYPH = ['', '⛺', '🛖', '🏘️', '🏛️', '🏙️', '🌆'];
 
 // ======================================================================= boot
@@ -43,86 +45,104 @@ async function boot() {
 }
 
 // ======================================================================= setup
-const SETUP = { scenario: 'standard', emerge: 1, civs: 24, age: 0, diff: 0, temper: 1, conquest: 0.5, name: '', color: '#4f8dff', tile: null, seed: Math.floor(Math.random() * 2 ** 31) };
+const SETUP = { country: 'United States of America', grp: 'great', q: '', scenario: 'standard', emerge: 1, civs: 24, age: 0, diff: 0, temper: 1, conquest: 0.5, name: '', color: '#4f8dff', tile: null, seed: Math.floor(Math.random() * 2 ** 31) };
 const COLORS = ['#4f8dff', '#e6194b', '#3cb44b', '#ffe119', '#f58231', '#911eb4', '#46f0f0', '#f032e6', '#bcf60c', '#ff9ec4', '#00a6a6', '#c9a0ff', '#b8742a', '#ffffff'];
+// ---- choose the country you lead (the world of 2025)
+const GROUPS = { all: 'All', great: 'Great powers', NATO: 'NATO', EU: 'EU', BRICS: 'BRICS', nuclear: 'Nuclear states', AU: 'Africa', ASEAN: 'ASEAN' };
+const GREAT = ['United States of America', 'China', 'Russia', 'India', 'United Kingdom', 'France', 'Germany', 'Japan'];
+const fmtPop = m => m >= 1000 ? (m / 1000).toFixed(2) + ' bn' : m >= 1 ? m.toFixed(m < 10 ? 1 : 0) + ' M' : Math.round(m * 1000) + ' k';
+const fmtGdp = b => b >= 1000 ? '$' + (b / 1000).toFixed(1) + ' tn' : '$' + Math.round(b) + ' bn';
+// the strategic situation of a country in one line
+function briefing(c) {
+  const war = WARS.find(w => w.includes(c.n)); const foe = war && war.find(x => x !== c.n);
+  if (war) return `At war with ${countryByName(foe).s}. Hold the line, keep your allies, and win the peace.`;
+  if (P5.includes(c.n)) return 'A permanent member of the UN Security Council, with a veto over the world\'s decisions.';
+  if (c.nk) return 'A nuclear power. Deterrence protects you; the world watches every move.';
+  if (c.b.includes('NATO')) return 'Sheltered by NATO\'s mutual defence. An attack on one is an attack on all.';
+  if (devOf(c) < 0.25) return 'A developing nation: grow the economy, keep the peace at home, and court powerful friends.';
+  if (c.gdp > 1000) return 'A major economy with the weight to shape its region.';
+  return 'A middle power. Choose your friends carefully.';
+}
 function showSetup() {
   setSpeed(0); G.pick = null; $('#pickbar').classList.add('hidden');
   const saved = loadSaved();
+  const lands = G.lands ||= territories(G.world);
   const opt = (k, v, label, small) => `<button class="btn ${SETUP[k] === v ? 'on' : ''}" data-k="${k}" data-v="${v}">${label}${small ? `<small>${small}</small>` : ''}</button>`;
+  const q = (SETUP.q || '').toLowerCase(), grp = SETUP.grp || 'great';
+  const list = COUNTRIES.filter(c => lands.has(c.n)).filter(c => grp === 'all' || (grp === 'great' ? GREAT.includes(c.n) : grp === 'nuclear' ? c.nk > 0 : c.b.includes(grp))).filter(c => !q || c.s.toLowerCase().includes(q) || c.n.toLowerCase().includes(q)).sort((a, b) => b.gdp - a.gdp);
+  const sel = countryByName(SETUP.country) || countryByName('United States of America');
+  const milBar = v => `<span class="milbar"><i style="width:${Math.min(100, v)}%"></i></span>`;
   $('#modal-card').innerHTML = `
-    <div class="kicker">From the Stone Age to the stars</div>
+    <div class="kicker">1 January 2025 · the world as it is</div>
     <h1>Ages of <span>Command</span></h1>
-    <p class="muted">The world begins empty: wild lands, wandering peoples and a handful of tribes. Claim the land, work its resources, grow camps into cities, and climb through ten ages of history: from flint tools and the first villages, through bronze, iron, empires, castles, the age of sail, steam and oil, to the bomb and artificial intelligence. Govern, negotiate, trade and fight in real time.</p>
-    <h2>Scenario</h2>
-    <div class="opt-row wrap">${Object.entries(SCENARIOS).map(([k, v]) => `<button class="btn ${SETUP.scenario === k ? 'on' : ''}" data-sc="${k}">${v.name}<small>${v.desc}</small></button>`).join('')}</div>
-    <h2>Civilizations</h2>
-    <div class="opt-row slider-row"><input type="range" id="st-civs" min="2" max="200" value="${SETUP.civs}"><span class="big2" id="st-civs-v">${SETUP.civs}</span><span class="muted small">rival tribes placed at random across the world</span></div>
-    <h2>Starting age</h2>
-    <div class="opt-row wrap">${[0, 1, 2, 3, 4, 5, 6, 7].map(a => opt('age', a, AGES[a].short, a === 0 ? 'The full journey' : AGES[a].from < 0 ? -AGES[a].from + ' BC' : 'AD ' + AGES[a].from)).join('')}</div>
-    <h2>New peoples</h2>
-    <div class="opt-row">${opt('emerge', 1, 'Rise and fall', 'Tribes unite into new civilizations; unstable empires suffer breakaways (up to 200)')}${opt('emerge', 0, 'Fixed', 'Only the civilizations placed at the start')}</div>
-    <h2>Rival rulers</h2>
-    <div class="opt-row">${opt('diff', -0.2, 'Chieftain', 'Rivals develop slowly and forgive easily')}${opt('diff', 0, 'Warlord', 'An even contest')}${opt('diff', 0.3, 'Emperor', 'Rivals grow faster, distrust you sooner and gang up on a leader')}${opt('diff', 0.6, 'Deity', 'Brutal: rivals outproduce you and coalitions form quickly')}</div>
-    <h2>Temperament</h2>
-    <div class="opt-row">${opt('temper', 0.5, 'Peaceful', 'Wars are rare')}${opt('temper', 1, 'Historical', 'Ambitious rulers fight')}${opt('temper', 1.7, 'Bloody', 'Constant warfare')}</div>
-    <h2>Victory</h2>
-    <div class="opt-row">${opt('conquest', 0.35, 'Dominion 35%', 'Rule 35% of all land')}${opt('conquest', 0.5, 'Dominion 50%', 'Rule half the world')}${opt('conquest', 0.75, 'World Empire', '75% of the land')}${opt('conquest', 0, 'No conquest', 'Science or the year 2100')}</div>
-    <div class="small muted" style="margin-top:4px">A science victory is always possible: be first to launch the Interstellar Colony Ship. In 2100 history judges the greatest civilization.</div>
-    <h2>Your people</h2>
-    <div class="opt-row"><input class="inp" id="st-name" placeholder="Name (leave blank for a name from your homeland)" value="${esc(SETUP.name)}" style="flex:1"></div>
-    <div class="swatches">${COLORS.map(c => `<span class="sw ${SETUP.color === c ? 'sel' : ''}" data-col="${c}" style="background:${c}"></span>`).join('')}</div>
+    <p class="muted">Lead a real nation through the world of 2025. Run its economy and its politics, answer crises, win elections or crush dissent, build alliances and blocs, outvote rivals at the United Nations, research the technologies of tomorrow, and decide when, if ever, to go to war.</p>
+    <div class="cp-wrap">
+      <div class="cp-list">
+        <div class="opt-row" style="gap:6px;flex-wrap:wrap">${Object.entries(GROUPS).map(([k, v]) => `<button class="chip ${grp === k ? 'on' : ''}" data-grp="${k}">${v}</button>`).join('')}</div>
+        <input class="inp" id="cp-q" placeholder="Search 150 countries..." value="${esc(SETUP.q || '')}" style="width:100%;margin:8px 0">
+        <div class="cp-rows">${list.map(c => `<div class="cp-row ${c.n === sel.n ? 'on' : ''}" data-cty="${esc(c.n)}"><span class="flagchip" style="background:${c.col || '#8a93a6'}"></span><span class="cp-n">${esc(c.s)}</span><span class="cp-g">${fmtGdp(c.gdp)}</span></div>`).join('') || '<div class="muted small">No country matches.</div>'}</div>
+      </div>
+      <div class="cp-detail">
+        <div class="cp-flag" style="background:${sel.col || '#8a93a6'}"></div>
+        <h2 style="margin:6px 0 2px">${esc(sel.f)}</h2>
+        <div class="muted small">${esc(GOV_TYPES[sel.gov]?.name || sel.gov)} · capital ${esc(sel.cap[0])} · ${esc(FAITHS_2025[sel.fa]?.name || '')}</div>
+        <div class="grid2" style="margin-top:10px">
+          <span>Population</span><span>${fmtPop(sel.pop)}</span>
+          <span>Economy (GDP)</span><span>${fmtGdp(sel.gdp)} · $${Math.round(sel.gdp / sel.pop * 1000).toLocaleString('en-US')} per head</span>
+          <span>Armed forces</span><span>${milBar(sel.mil)} ${sel.mil >= 60 ? 'world power' : sel.mil >= 35 ? 'strong' : sel.mil >= 15 ? 'capable' : sel.mil >= 5 ? 'modest' : 'token'}</span>
+          <span>Nuclear arsenal</span><span>${sel.nk ? `~${sel.nk.toLocaleString('en-US')} warheads` : 'none'}</span>
+          <span>Blocs</span><span>${['UN', ...sel.b].join(', ')}${P5.includes(sel.n) ? ' · <b class="gold">UN veto</b>' : ''}</span>
+          <span>Territory</span><span>${lands.get(sel.n)?.length || 0} provinces</span>
+        </div>
+        <p class="small" style="margin-top:10px">${esc(briefing(sel))}</p>
+        <button class="btn" id="cp-map" style="margin-top:4px">Choose on the map instead &#9656;</button>
+      </div>
+    </div>
+    <h2>Rival governments</h2>
+    <div class="opt-row">${opt('diff', -0.2, 'Forgiving', 'Rivals develop slowly and forgive easily')}${opt('diff', 0, 'Realistic', 'An even contest')}${opt('diff', 0.3, 'Hardball', 'Rivals grow faster and distrust you sooner')}</div>
     <div class="modal-foot">
-      ${saved ? `<button class="btn" id="st-resume">Resume: the ${esc(saved.name)} (${esc(saved.when)})</button>` : ''}
+      ${saved ? `<button class="btn" id="st-resume">Resume: ${esc(saved.name)} (${esc(saved.when)})</button>` : ''}
       <button class="btn" id="st-help">Manual</button>
-      <button class="btn go" id="st-go">Choose your homeland &#9656;</button>
+      <button class="btn go" id="st-go">Lead ${esc(sel.s)} &#9656;</button>
     </div>`;
   const card = $('#modal-card');
   for (const b of card.querySelectorAll('[data-k]')) b.onclick = () => { SETUP[b.dataset.k] = +b.dataset.v; showSetup(); };
-  for (const b of card.querySelectorAll('[data-col]')) b.onclick = () => { SETUP.color = b.dataset.col; showSetup(); };
-  for (const b of card.querySelectorAll('[data-sc]')) b.onclick = () => { SETUP.scenario = b.dataset.sc; showSetup(); };
-  $('#st-civs').oninput = e => { SETUP.civs = +e.target.value; $('#st-civs-v').textContent = SETUP.civs; };
-  $('#st-name').oninput = e => { SETUP.name = e.target.value.trim(); };
-  $('#st-go').onclick = beginPick;
+  for (const b of card.querySelectorAll('[data-grp]')) b.onclick = () => { SETUP.grp = b.dataset.grp; showSetup(); };
+  for (const b of card.querySelectorAll('[data-cty]')) b.onclick = () => { SETUP.country = b.dataset.cty; const sc = card.querySelector('.cp-rows').scrollTop; showSetup(); $('#modal-card .cp-rows').scrollTop = sc; };
+  const qi = $('#cp-q'); qi.oninput = () => { SETUP.q = qi.value; if (SETUP.q && SETUP.grp !== 'all') SETUP.grp = 'all'; showSetup(); const x = $('#cp-q'); x.focus(); x.setSelectionRange(x.value.length, x.value.length); };
+  $('#cp-map').onclick = beginPick;
+  $('#st-go').onclick = () => startGame();
   $('#st-help').onclick = () => showManual(true);
   if (saved) $('#st-resume').onclick = () => resume(saved);
   $('#modal').classList.remove('hidden');
 }
 
-// ---- choose a homeland on the globe
-const previewCache = new Map();
-function preview(i) {
-  if (previewCache.has(i)) return previewCache.get(i);
-  const R = G.world.regions[i]; if (R.sea) return null;
-  const g = G.geo[i] || { veg: 0.5, desert: 0, ice: 0, elev: 0.1, relief: 0.02, high: 0 };
-  const c = classify(R, g);
-  const t = { ...c, coastal: R.coastal, lat: R.lat, lon: R.lon, country: R.country };
-  t.dep = generateDeposits(t, rng(SETUP.seed + i * 7919));
-  previewCache.set(i, t);
-  return t;
-}
+// ---- or pick the country on the globe
+function countryAt(i) { const lands = G.lands ||= territories(G.world); for (const [n, tiles] of lands) if (tiles.includes(i)) return n; return null; }
 function beginPick() {
   $('#modal').classList.add('hidden');
-  G.pick = { tile: SETUP.tile };
+  G.pick = { tile: null, country: SETUP.country };
   renderPick();
   $('#pickbar').classList.remove('hidden');
+  const c = countryByName(SETUP.country); if (c) G.globe.flyTo(c.cap[1], c.cap[2], 2.2);
 }
 function renderPick() {
-  const t = G.pick.tile !== null && G.pick.tile !== undefined ? preview(G.pick.tile) : null;
-  const R = t ? G.world.regions[G.pick.tile] : null;
-  $('#pickbar').innerHTML = `<div class="pk-main">${t ? `<b>${esc(R.name)}</b> · ${TERRAIN[t.terrain].name}${t.river ? ' with a great river' : ''}${t.coastal ? ' · coastal' : ''} · fertility ${pct(t.fert)} · ${t.dep.filter(d => !RES[d.r].reveal || RES[d.r].reveal === 'animal_husbandry').map(d => RES[d.r].icon + ' ' + RES[d.r].name).join(', ') || 'no notable resources'}<div class="small muted">River valleys and fertile coasts grow fastest. Hidden deposits (metals, coal, oil) reveal themselves as you learn.</div>` : 'Click a land tile anywhere on Earth to found your civilization there.'}</div>
-    <div class="pk-btns"><button class="btn" id="pk-back">&#9666; Back</button><button class="btn" id="pk-rand">Random homeland</button><button class="btn go" id="pk-go" ${t ? '' : 'disabled'}>Found our people here &#9656;</button></div>`;
+  if (G.pick.tile !== null && G.pick.tile !== undefined) { const n = countryAt(G.pick.tile); if (n) G.pick.country = n; }
+  const c = countryByName(G.pick.country);
+  $('#pickbar').innerHTML = `<div class="pk-main">${c ? `<b>${esc(c.f)}</b> · ${esc(GOV_TYPES[c.gov]?.name || '')} · ${fmtPop(c.pop)} people · ${fmtGdp(c.gdp)} · ${esc(briefing(c))}` : 'Click a country on the globe.'}</div>
+    <div class="pk-btns"><button class="btn" id="pk-back">&#9666; Back</button><button class="btn" id="pk-rand">Random country</button><button class="btn go" id="pk-go" ${c ? '' : 'disabled'}>Lead ${c ? esc(c.s) : 'this country'} &#9656;</button></div>`;
   $('#pk-back').onclick = () => { G.pick = null; paintPick(); showSetup(); };
-  $('#pk-rand').onclick = () => {
-    const land = G.world.regions.filter(r => !r.sea).map(r => r.i).filter(i => { const p = preview(i); return p.hab > 0.7 && p.terrain !== 'ice'; });
-    G.pick.tile = land[(Math.random() * land.length) | 0]; const R2 = G.world.regions[G.pick.tile]; G.globe.flyTo(R2.lat, R2.lon, 2.2); paintPick(); renderPick();
-  };
-  $('#pk-go').onclick = () => { SETUP.tile = G.pick.tile; G.pick = null; $('#pickbar').classList.add('hidden'); startGame(); };
+  $('#pk-rand').onclick = () => { const all = [...(G.lands ||= territories(G.world)).keys()]; G.pick.country = all[(Math.random() * all.length) | 0]; G.pick.tile = null; const r = countryByName(G.pick.country); G.globe.flyTo(r.cap[1], r.cap[2], 2.2); renderPick(); };
+  $('#pk-go').onclick = () => { SETUP.country = G.pick.country; G.pick = null; $('#pickbar').classList.add('hidden'); startGame(); };
   paintPick();
 }
 function paintPick() {
-  const g = G.globe;
-  for (const R of G.world.regions) g.setRegion(R.i, { alpha: 0, highlight: G.pick && (R.i === G.pick.tile ? 0.95 : R.i === G.hover ? 0.4 : 0) || 0 });
-  if (G.pick?.tile !== null && G.pick?.tile !== undefined) g.setRegion(G.pick.tile, { color: SETUP.color, alpha: 0.5, highlight: 0.9 });
+  const g = G.globe, lands = G.lands ||= territories(G.world);
+  for (const R of G.world.regions) g.setRegion(R.i, { alpha: 0, highlight: 0 });
+  if (G.pick) for (const [n, tiles] of lands) {
+    const c = countryByName(n), on = n === G.pick.country;
+    for (const i of tiles) g.setRegion(i, { color: c.col || '#8a93a6', alpha: on ? 0.6 : 0.22, highlight: on ? 0.6 : i === G.hover ? 0.3 : 0 });
+  }
   g.commitPalette();
 }
 
@@ -135,20 +155,19 @@ async function useMap(v) {
   G.json = json; G.geo = geo; G.world = new World(json); G.mapVersion = v;
   G.globe.setWorld(G.world, json);
   for (const m of [G.markerEls, G.labelEls, G.iconEls]) { for (const el of m.values()) el.remove(); m.clear(); }
-  previewCache.clear();
 }
 async function startGame() {
   await useMap(G.currentMap);
-  const sim = new Sim(G.world, G.geo, { player: 'C0', civs: SETUP.civs, startAge: SETUP.age, difficulty: SETUP.diff, temper: SETUP.temper, conquest: SETUP.conquest, seed: SETUP.seed, startTile: SETUP.tile, playerName: SETUP.name || null, playerColor: SETUP.color, emergence: !!SETUP.emerge, maxCivs: 200, scenario: SETUP.scenario });
-  SETUP.seed = Math.floor(Math.random() * 2 ** 31); previewCache.clear();
+  const sim = new Sim(G.world, G.geo, { country: SETUP.country, difficulty: SETUP.diff, seed: SETUP.seed });
+  SETUP.seed = Math.floor(Math.random() * 2 ** 31);
   attach(sim);
   const N = sim.s.nations[sim.s.player];
-  sim.emit('info', `The ${N.name} people settle at ${G.world.regions[N.capital].name}. Their story begins in the ${AGES[N.age].name}.`, [N.code]);
+  sim.emit('info', `You take office as leader of ${theOfficial(N)}. The date is 1 January 2025.`, [N.code]);
   $('#modal').classList.add('hidden');
   const cap = G.world.regions[N.capital];
-  G.globe.flyTo(cap.lat, cap.lon, 1.75);
+  G.globe.flyTo(cap.lat, cap.lon, 1.9);
   selectRegion(N.capital);
-  setSpeed(2);
+  setSpeed(1);
 }
 async function resume(saved) {
   try {
@@ -607,9 +626,9 @@ function placeTip(tt, e) {
 function pickTip(i, e) {
   const tt = $('#tooltip');
   if (i === null || G.world.regions[i].sea) { tt.classList.add('hidden'); $('#ro-region').textContent = i === null ? '--' : G.world.regions[i].name; return; }
-  const t = preview(i), R = G.world.regions[i];
+  const R = G.world.regions[i], c = countryByName(countryAt(i));
   $('#ro-region').textContent = R.name;
-  tt.innerHTML = `<div class="tt-name">${esc(R.name)}</div><div class="tt-row"><span class="muted">Land</span><span>${TERRAIN[t.terrain].name}${t.river ? ' · river' : ''}</span></div><div class="tt-row"><span class="muted">Fertility</span><span>${pct(t.fert)}</span></div><div class="tt-row"><span class="muted">Habitability</span><span>${pct(Math.min(1.6, t.hab) / 1.6)}</span></div>${R.country ? `<div class="tt-row"><span class="muted">Modern</span><span>${esc(R.country)}</span></div>` : ''}<div class="small" style="margin-top:4px">${t.dep.filter(d => !RES[d.r].reveal || ['animal_husbandry', 'pottery', 'weaving', 'horticulture'].includes(RES[d.r].reveal)).map(d => RES[d.r].icon + ' ' + RES[d.r].name).join(' · ') || '<span class="muted">No visible resources</span>'}</div>`;
+  tt.innerHTML = `<div class="tt-name">${esc(R.name)}</div>${c ? `<div class="tt-row"><span class="muted">Country</span><span>${esc(c.s)}</span></div><div class="tt-row"><span class="muted">People</span><span>${fmtPop(c.pop)}</span></div><div class="tt-row"><span class="muted">Economy</span><span>${fmtGdp(c.gdp)}</span></div>` : ''}`;
   placeTip(tt, e);
 }
 function pickUnit(cx, cy) {
@@ -737,7 +756,9 @@ function renderTop() {
   const sim = G.sim, s = sim.s, N = s.nations[s.player], st = N.st;
   $('#tb-date').textContent = dstr();
   const A = AGES[N.age];
-  const ab = $('#tb-age'); ab.textContent = N.ageAdv ? `${A.short} → ${AGES[N.age + 1].short}` : A.name; ab.style.setProperty('--ac', A.color);
+  const ab = $('#tb-age');
+  if (s.modern) { const GT = GOV_TYPES[N.gov.type]; ab.textContent = GT.name; ab.style.setProperty('--ac', GT.democratic ? '#7fb4e8' : '#e0a83e'); }
+  else { ab.textContent = N.ageAdv ? `${A.short} → ${AGES[N.age + 1].short}` : A.name; ab.style.setProperty('--ac', A.color); }
   const capR = G.world.regions[N.capital];
   if (capR) {
     const sn = seasonName(capR.lat, s.t), c = cold(capR.lat, s.t);
@@ -745,7 +766,7 @@ function renderTop() {
     if (se.textContent !== txt) { se.textContent = txt; se.title = sn === 'Winter' ? `Winter at your capital${c > 0.35 ? ': armies march slower, and those camped outside your lands suffer the cold' : ''}. Harvests are lean.` : sn === 'Summer' ? 'Summer at your capital: harvests are rich.' : sn === 'Wet' || sn === 'Dry' ? 'The tropics know only wet and dry seasons.' : `${sn} at your capital.`; }
   }
   $('#brand-name').textContent = styleName(N);
-  $('#brand-sub').textContent = `${N.name} · ${AGES[N.age].name}`;
+  $('#brand-sub').textContent = s.modern ? `${GOV_TYPES[N.gov.type].ruler} · ${N.gov.leaderName || 'you'}` : `${N.name} · ${AGES[N.age].name}`;
   $('#crest').style.background = N.color; $('#crest').textContent = N.name.slice(0, 2).toUpperCase();
   const stock = k => { const net = st.net[k] || 0; return [STOCK_ICON[k] + ' ' + k[0].toUpperCase() + k.slice(1), fmt(N[k] || 0), net, sgn(net)]; };
   const items = [stock('food'), stock('wood'), stock('stone')];
@@ -767,6 +788,7 @@ function renderTop() {
 }
 function renderStanding() {
   const sim = G.sim, s = sim.s;
+  if (s.modern) return renderPowerRanking(sim, s);
   const goal = s.victory.conquest;
   $('#st-goal').textContent = goal ? `Dominion ${Math.round(goal * 100)}%` : 'No conquest victory';
   const ranks = Object.values(s.nations).filter(n => n.alive && (n.code === s.player || s.nations[s.player].known.includes(n.code))).map(n => ({ c: n.code, v: sim.score(n.code), a: n.age })).sort((a, b) => b.v - a.v);
@@ -777,6 +799,18 @@ function renderStanding() {
     ${goal ? `<div class="goal-bar"><i style="width:${Math.min(100, share / goal * 100)}%"></i></div>` : ''}` +
     ranks.slice(0, 7).map(r => `<div class="rank ${r.c === s.player ? 'me' : ''}" data-c="${r.c}"><span class="dot" style="background:${sim.col(r.c)}"></span><span>${esc(sim.nm(r.c))} <i class="agechip" style="--ac:${AGES[r.a].color}">${AGES[r.a].short}</i></span><span class="n">${r.v}</span></div>`).join('') +
     `<div class="muted" style="margin-top:6px">${alive} civilizations · ${Object.values(s.rel).filter(v => v === 'war').length} wars · ${ranks.length - 1} known to you</div>`;
+  if (setHTML($('#standing-body'), h)) for (const e of document.querySelectorAll('.rank[data-c]')) e.onclick = () => openDossier(e.dataset.c);
+}
+// the modern world: a ranking of national power (economy, military, research, influence)
+function renderPowerRanking(sim, s) {
+  $('#st-goal').textContent = 'World power';
+  const ranks = Object.values(s.nations).filter(n => n.alive).map(n => ({ c: n.code, v: sim.score(n.code) })).sort((a, b) => b.v - a.v);
+  const me = ranks.findIndex(r => r.c === s.player);
+  const rows = ranks.slice(0, 8); if (me >= 8) rows.push(ranks[me]);
+  const top = ranks[0]?.v || 1;
+  const h = `<div class="muted">You rank <b class="gold">#${me + 1}</b> of ${ranks.length} nations</div>` +
+    rows.map(r => `<div class="rank ${r.c === s.player ? 'me' : ''}" data-c="${r.c}"><span class="dot" style="background:${sim.col(r.c)}"></span><span>${esc(sim.nm(r.c))}<span class="rk-bar"><i style="width:${Math.round(r.v / top * 100)}%;background:${sim.col(r.c)}"></i></span></span><span class="n">${ranks.indexOf(r) + 1}</span></div>`).join('') +
+    `<div class="muted" style="margin-top:6px">${Object.values(s.rel).filter(v => v === 'war').length} wars under way</div>`;
   if (setHTML($('#standing-body'), h)) for (const e of document.querySelectorAll('.rank[data-c]')) e.onclick = () => openDossier(e.dataset.c);
 }
 // split the selected army into k detachments with an even mix of unit types and strength

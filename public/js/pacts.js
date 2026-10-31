@@ -315,7 +315,7 @@ export function motions(sim, P) {
   for (const x of ranked) {
     out.push({ kind: 'condemn', target: x, text: `Condemn the aggression of the ${sim.nm(x)}`, fx: `Every member thinks less of them, and their infamy grows.` });
     if (P.doctrines.sanctions && !P.members.every(m => s.sanctions.some(z => z.by === m && z.on === x))) out.push({ kind: 'sanction', target: x, text: `Impose a collective embargo on the ${sim.nm(x)}`, fx: 'Every member cuts its trade with them.' });
-    if (P.doctrines.defense || P.members.some(m => sim.atWar(m, x))) out.push({ kind: 'intervene', target: x, text: `Collective intervention against the ${sim.nm(x)}`, fx: 'Every member goes to war with them. Needs two thirds of the votes cast.', super: true });
+    if (!P.un && P.members.some(m => sim.atWar(m, x))) out.push({ kind: 'intervene', target: x, text: `Collective intervention against the ${sim.nm(x)}`, fx: 'Every member goes to war with them. Needs two thirds of the votes cast.', super: true });
   }
   // members at war with outsiders: a call for peace
   for (const m of P.members) { const e = sim.warsOf(m).find(e => !mem.has(e)); if (e) { out.push({ kind: 'peace', target: e, a: m, text: `Call for peace between the ${sim.nm(m)} and the ${sim.nm(e)}`, fx: 'The chair mediates, with the weight of the pact behind it.' }); break; } }
@@ -333,6 +333,8 @@ export function motions(sim, P) {
   if (P.doctrines.faith) { const F = s.faiths?.[P.faith]; const h = F?.holy != null ? s.regions[F.holy]?.owner : null; if (h && !mem.has(h) && s.nations[h]?.faith !== P.faith) out.push({ kind: 'crusade', target: h, text: `Proclaim a holy war on the ${sim.nm(h)}, who hold the holy city`, fx: 'Every member goes to war; the faithful grow zealous. Needs two thirds of the votes cast.', super: true }); }
   if (P.members.some(m => s.nations[m].age >= 8) && P.members.some(m => s.nations[m].warheads)) out.push({ kind: 'nukes', text: 'Treaty to reduce nuclear arsenals', fx: 'Members with warheads destroy half of them.' });
   if (!out.length) out.push({ kind: 'concord', text: 'Reaffirm the friendship of the members', fx: 'Goodwill between members grows.' });
+  // the United Nations condemns, sanctions, mediates and relieves; it does not go to war or police its membership
+  if (P.un) return out.filter(m => ['condemn', 'sanction', 'peace', 'relief', 'nukes', 'concord'].includes(m.kind));
   return out;
 }
 
@@ -345,7 +347,7 @@ export function aiVote(sim, m, P, mo) {
     sc = -sim.opinion(m, x) / 30 + (sim.atWar(m, x) ? 3 : 0) + (s.nations[x].infamy || 0) / 15;
     if (sim.rel(m, x) === 'alliance' || s.nations[x].overlord === m || M.overlord === x) sc -= 5;
     if (mo.kind === 'sanction' && s.trades.some(tr => (tr.from === m && tr.to === x) || (tr.from === x && tr.to === m))) sc -= 1;
-    if (mo.kind === 'intervene' || mo.kind === 'crusade') sc += t.aggression - t.caution * 1.2 - (sim.power(x) > sim.power(m) * 2 ? 1.5 : 0) - M.exhaustion * 3;
+    if (mo.kind === 'intervene' || mo.kind === 'crusade') sc += t.aggression - t.caution * 1.2 - (sim.power(x) > sim.power(m) * 2 ? 1.5 : 0) - M.exhaustion * 3 - (s.modern ? 1.5 : 0) - (s.nations[x].warheads ? 4 : 0); // nobody wants war with a nuclear power
     if (mo.kind === 'crusade') sc += (M.rep?.zealot || 0) / 30;
   } else if (mo.kind === 'peace') {
     if (m === mo.a || m === x) sc = s.nations[m].exhaustion * 4 - 1 + t.caution - t.aggression;
@@ -383,8 +385,9 @@ export function tally(P) {
   const v = Object.values(P.session?.votes || {});
   const yes = v.filter(x => x === 'yes').length, no = v.filter(x => x === 'no').length, abst = v.filter(x => x === 'abstain').length;
   const sup = !!P.session?.motion?.super;
-  const passed = yes > 0 && (sup ? yes >= (yes + no) * 2 / 3 : yes > no) && yes >= Math.ceil(P.members.length / 3);
-  return { yes, no, abst, passed, sup };
+  const vetoed = (P.veto || []).find(m => P.session?.votes?.[m] === 'no') || null; // a permanent member's veto
+  const passed = !vetoed && yes > 0 && (sup ? yes >= (yes + no) * 2 / 3 : yes > no) && yes >= Math.ceil(P.members.length / 3);
+  return { yes, no, abst, passed, sup, vetoed };
 }
 
 export function closeSession(sim, P) {
@@ -422,10 +425,10 @@ export function closeSession(sim, P) {
     else if (mo.kind === 'nukes') { for (const m of P.members) { const M = s.nations[m]; if (M.warheads) { M.warheads = Math.floor(M.warheads / 2); earn(sim, m, 'peacemaker', 6); } } outcome = `The members of the ${P.name} halve their nuclear arsenals.`; }
     else { for (const a of P.members) for (const b of P.members) if (a !== b) sim.addOpinion(a, b, 5); outcome = `The members of the ${P.name} reaffirm their friendship.`; }
     for (const m of ayes) earn(sim, m, 'peacemaker', mo.kind === 'intervene' || mo.kind === 'crusade' ? 0 : 1.5);
-  } else outcome = `The motion "${mo.text}" fails in the ${P.name}.`;
+  } else outcome = r.vetoed ? `${sim.nm(r.vetoed)} vetoes the motion "${mo.text}" in the ${P.name}.` : `The motion "${mo.text}" fails in the ${P.name}.`;
   // members remember who voted with them and against them
   for (const a of P.members) for (const b of P.members) if (a !== b && S.votes[a] !== 'abstain' && S.votes[b] !== 'abstain') sim.addOpinion(a, b, S.votes[a] === S.votes[b] ? 2 : -2);
-  const rec = { t: s.t, y: s.year, text: mo.text, kind: mo.kind, passed: r.passed, yes: r.yes, no: r.no, abst: r.abst, votes: { ...S.votes }, outcome };
+  const rec = { t: s.t, y: s.year, text: mo.text, kind: mo.kind, passed: r.passed, vetoed: r.vetoed, yes: r.yes, no: r.no, abst: r.abst, votes: { ...S.votes }, outcome };
   P.log.unshift(rec); if (P.log.length > 20) P.log.pop();
   sim.emit('treaty', `${P.name}: ${outcome} (${r.yes} for, ${r.no} against${r.abst ? `, ${r.abst} abstaining` : ''})`, [P.chair, ...(x ? [x] : [])], { major: P.members.length >= 4 && r.passed && ['intervene', 'crusade', 'sanction'].includes(mo.kind) });
   void nays;
