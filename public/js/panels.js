@@ -2,7 +2,7 @@
 import { AGES, ageScale } from './eras.js';
 import { UNITS, LINES, LINE_ORDER, bestOf, SETTLEMENTS, BUILDINGS, BUILD_ORDER, WONDERS } from './units.js';
 import { TERRAIN, RES, IMPROVEMENTS, IMP_ORDER, IMP_CAP, STRATEGIC, LUXURIES, known } from './resources.js';
-import { TECHS, TECH, BRANCHES, canResearch, ageProgress, AGE_TECHS, ADVANCE_SHARE } from './tech.js';
+import { TECHS, TECH, BRANCHES, canResearch, ageProgress, AGE_TECHS, ADVANCE_SHARE, MODERN_BRANCH } from './tech.js';
 import { GOV_TYPES, LAWS, ROLES, CABINET, TRAITS, lawOpt, lawVisible, canEnact, enact, reform, reformCost, appoint, hireCost, lawCost, govAvailable, styleName, roleTitle, charTitle } from './gov.js';
 import { formProgress } from './formables.js';
 import { GOODS } from './sim.js';
@@ -583,15 +583,16 @@ const prog = p => p.parts.reduce((a, pp) => a + Math.min(1, pp.have / Math.max(1
 // ======================================================================= ages & research
 function renderAges(host) {
   const sim = G.sim, s = sim.s, P = s.player, N = s.nations[P], R = N.research;
-  const A = AGES[N.age], nxt = AGES[N.age + 1];
+  const A = AGES[N.age], nxt = s.modern ? null : AGES[N.age + 1];
   const have = AGE_TECHS[N.age].filter(t => N.techs[t.id]).length, total = AGE_TECHS[N.age].length, need = Math.ceil(ADVANCE_SHARE * total);
-  let h = `<div class="card agecard" style="--ac:${A.color}"><div class="kicker">${dstr()}</div><div class="big">${A.name}</div><div class="sub">${esc(A.blurb)}</div>`;
-  if (nxt) {
+  let h = s.modern ? modernRnD(sim, N) : `<div class="card agecard" style="--ac:${A.color}"><div class="kicker">${dstr()}</div><div class="big">${A.name}</div><div class="sub">${esc(A.blurb)}</div>`;
+  if (s.modern) { /* no ages: the frontier summary above */ }
+  else if (nxt) {
     h += `<div class="grid2" style="margin-top:10px"><span>${A.short} technologies</span><span>${have} / ${total} (need ${need})</span></div><div class="meter"><i style="width:${pct(have / total)};background:var(--ac)"></i></div>`;
     if (N.ageAdv) h += `<div class="row" style="margin-top:8px"><span class="hi">Entering the ${nxt.name}</span><span class="muted">${N.ageAdv.left}d</span></div><div class="prog"><i style="width:${pct(1 - N.ageAdv.left / N.ageAdv.total)}"></i></div>`;
     else { const chk = sim.canAdvance(P); h += `<div style="margin-top:10px">${btnCost(chk, `Advance to the ${nxt.name}`, 'data-advance="1" class="btn go"')}</div>${why(chk)}`; }
   } else h += '<div class="sub" style="margin-top:8px">The final age. Reach for the stars: research Interstellar Travel and build the Colony Ship.</div>';
-  h += '</div>';
+  if (!s.modern) h += '</div>';
   const cur = R.cur && TECH[R.cur];
   const cost = cur ? sim.techCostFor(N, R.cur) : 0;
   h += `<div class="card"><div class="kicker">Current research</div><div class="big" style="font-size:18px">${cur ? cur.name : 'Nothing'}</div><div class="sub">${cur ? esc(cur.desc) : 'Choose a technology below or open the tree.'}</div>
@@ -600,13 +601,23 @@ function renderAges(host) {
     <div style="display:flex;gap:6px;margin-top:10px"><button class="btn go" id="opentree">Open the tree of knowledge</button></div></div>`;
   if (R.queue.length) h += `<div class="sec"><div class="sec-title">Queue</div>${R.queue.map((id, k) => `<div class="row"><span>${k + 1}. ${TECH[id].name}</span><button class="btn sm" data-unq="${id}">Remove</button></div>`).join('')}</div>`;
   const av = TECHS.filter(t => canResearch(N, t.id)).sort((a, b) => a.cost - b.cost);
-  h += `<div class="sec"><div class="sec-title">Can be studied now</div>${av.map(t => `<div class="row"><span><span class="hi">${t.name}</span> <span class="small muted">${BRANCHES.find(b => b.id === t.branch).name} · ${fmt(sim.techCostFor(N, t.id))}</span><br><span class="small muted">${esc(t.desc)} ${unlockText(t.id)}</span></span><span style="display:flex;gap:4px;flex-direction:column"><button class="btn sm go" data-res="${t.id}">Study</button><button class="btn sm" data-q="${t.id}">Queue</button></span></div>`).join('') || `<div class="muted small">${nxt ? `Every ${A.name} technology you can reach is known. Advance to the ${nxt.name}.` : 'All knowledge is yours.'}</div>`}</div>`;
+  h += `<div class="sec"><div class="sec-title">Can be studied now</div>${av.map(t => `<div class="row"><span><span class="hi">${t.name}</span> <span class="small muted">${(s.modern && MODERN_BRANCH[t.branch]) || BRANCHES.find(b => b.id === t.branch).name}${t.tier ? ` · tier ${t.tier}` : ''} · ${fmt(sim.techCostFor(N, t.id))}</span><br><span class="small muted">${esc(t.desc)} ${unlockText(t.id)}</span></span><span style="display:flex;gap:4px;flex-direction:column"><button class="btn sm go" data-res="${t.id}">Study</button><button class="btn sm" data-q="${t.id}">Queue</button></span></div>`).join('') || `<div class="muted small">${nxt ? `Every ${A.name} technology you can reach is known. Advance to the ${nxt.name}.` : 'All knowledge is yours.'}</div>`}</div>`;
   if (!setHTML(host, h)) return;
   $('#opentree').onclick = () => openTree();
   host.querySelector('[data-advance]')?.addEventListener('click', () => { const r = sim.advance(P); if (!r.ok) toast('Ages', r.why, 'warn'); else toast('Ages', `Your people begin the passage into the ${nxt.name}.`, 'good'); renderPanel(true); });
   for (const b of host.querySelectorAll('[data-res]')) b.onclick = () => { if (R.cur && R.cur !== b.dataset.res) R.queue.unshift(R.cur); R.cur = b.dataset.res; R.queue = R.queue.filter(x => x !== R.cur); renderPanel(true); };
   for (const b of host.querySelectorAll('[data-q]')) b.onclick = () => { queueTech(N, b.dataset.q); renderPanel(true); };
   for (const b of host.querySelectorAll('[data-unq]')) b.onclick = () => { R.queue = R.queue.filter(x => x !== b.dataset.unq); renderPanel(true); };
+}
+// research & development in the modern world: output, spending and how far along each tier the nation is
+function modernRnD(sim, N) {
+  const mod = TECHS.filter(x => x.age === 9 && x.tier);
+  const NAME = ['', 'Fielded in 2025', 'Near future', 'Next decade', 'Frontier', 'Breakthroughs'];
+  const world = Object.values(sim.s.nations).filter(n => n.alive).sort((a, b) => (b.st.rp || 0) - (a.st.rp || 0));
+  const rank = world.findIndex(n => n.code === N.code) + 1;
+  return `<div class="card"><div class="kicker">${dstr()} · research & development</div><div class="big">${fmt(N.st.rp)} <span class="small muted">research per day</span></div>
+    <div class="sub">World rank #${rank} in research output. Spending: ${fmt(N.st.researchSpend || 0)} wealth/day.</div>
+    ${[1, 2, 3, 4, 5].map(k => { const L = mod.filter(x => x.tier === k), have = L.filter(x => N.techs[x.id]).length; return `<div class="grid2" style="margin-top:6px"><span>Tier ${k} · ${NAME[k]}</span><span>${have} / ${L.length}</span></div><div class="meter"><i style="width:${pct(have / L.length)}"></i></div>`; }).join('')}</div>`;
 }
 // what a technology unlocks, as a short string
 export function unlockText(id) {

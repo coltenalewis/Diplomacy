@@ -1733,10 +1733,12 @@ export class Sim {
 }
 
 // AI / science-minister tech choice
+const BOMB = ['nuclear_weapons', 'thermonuclear', 'icbm'];
 export function pickTech(N, focus) {
-  const av = available(N);
+  // states without the bomb do not reach for it, unless they are among the would-be proliferators
+  const av = available(N).filter(x => !(N.age >= 9 && N.ai && BOMB.includes(x.id) && !N.techs.nuclear_weapons && !N.proliferator));
   if (!av.length) return null;
-  const pref = { military: ['war', 'sea'], economy: ['food', 'craft', 'econ'], science: ['lore'], civic: ['civic'], balanced: null }[focus || 'balanced'];
+  const pref = { military: ['war', 'sea', 'intel'], economy: ['food', 'craft', 'econ'], science: ['lore'], civic: ['civic'], balanced: null }[focus || 'balanced'];
   const sci = N.traits?.science ?? 0.5;
   const score = x => x.cost * (pref && !pref.includes(x.branch) ? 2.5 : 1) * (x.branch === 'lore' ? 1.1 - sci * 0.3 : 1) * (0.75 + Math.random() * 0.5);
   return av.sort((a, b) => score(a) - score(b))[0].id;

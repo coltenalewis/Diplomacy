@@ -11,7 +11,10 @@ export const BRANCHES = [
   { id: 'lore', name: 'Knowledge & Science', color: '#57d2ff' },
   { id: 'civic', name: 'Government & Society', color: '#c49bff' },
   { id: 'econ', name: 'Commerce', color: '#ffd166' },
+  { id: 'intel', name: 'Intelligence & Cyber', color: '#9fe870' },
 ];
+// the modern names of the branches
+export const MODERN_BRANCH = { food: 'Health & Agriculture', craft: 'Energy & Industry', war: 'Defence', sea: 'Space & Naval', lore: 'Science & Computing', civic: 'Governance & Society', econ: 'Economy & Finance', intel: 'Intelligence & Cyber' };
 
 export const TECHS = [];
 const t = (age, branch, id, name, req, fx, desc) => TECHS.push({ id, age, branch, name, req, fx: fx || {}, desc: desc || '' });
@@ -251,7 +254,95 @@ t(9, 'civic', 'mass_surveillance', 'Mass Surveillance', ['internet', 'machine_le
 t(9, 'lore', 'social_media', 'Social Media', ['internet'], { approval: 0.02, pc: 0.08, unrestMin: 0.03 }, 'Everyone has a voice, and outrage spreads at the speed of light.');
 t(9, 'craft', 'electric_vehicles', 'Electric Vehicles', ['batteries', 'renewables'], { oil: 0.2, energy: 0.05 }, 'Batteries replace petrol in cars and trucks.');
 
-export const TECH = {}; for (const x of TECHS) { x.cost = Math.round(techCost(x.age) * (0.85 + 0.3 * (x.req.length ? 1 : 0) + (x.req.length > 1 ? 0.1 : 0))); TECH[x.id] = x; }
+// ---------------------------------------------------------------- the modern frontier (2025 onwards)
+// tier: 1 fielded by leading nations in 2025 ... 5 speculative breakthroughs. Cost rises with the tier.
+const m = (tier, branch, id, name, req, fx, desc) => { t(9, branch, id, name, req, fx, desc); TECHS[TECHS.length - 1].tier = tier; };
+// defence
+m(1, 'war', 'drone_warfare', 'Drone Warfare', ['precision_munitions'], { atk: 0.04 }, 'Cheap quadcopters and FPV drones dominate the front line.');
+m(1, 'war', 'special_operations', 'Special Operations Command', ['counter_terrorism'], { covert: 0.08, xp: 0.1 }, 'Elite units for raids, rescues and covert war.');
+m(2, 'war', 'loitering_munitions', 'Loitering Munitions', ['drone_warfare', 'precision_munitions'], { atk: 0.05 }, 'Kamikaze drones that circle until a target appears.');
+m(2, 'war', 'electronic_warfare', 'Electronic Warfare', ['network_warfare'], { defLand: 0.05, defAir: 0.05 }, 'Jam, spoof and blind the enemy\'s sensors and drones.');
+m(2, 'war', 'battlefield_medicine', 'Battlefield Medicine', ['genetic_engineering'], { xp: 0.1, manpower: 0.1 }, 'Golden-hour evacuation and field surgery save soldiers.');
+m(3, 'war', 'hypersonic_missiles', 'Hypersonic Missiles', ['loitering_munitions', 'missile_defense'], { atk: 0.06, atkSea: 0.08 }, 'Mach 5+ weapons that outrun most defences.');
+m(3, 'war', 'layered_air_defense', 'Layered Air & Missile Defence', ['missile_defense', 'electronic_warfare'], { intercept: 0.2, defAir: 0.08 }, 'Interceptors, lasers and guns in overlapping shields.');
+m(3, 'war', 'exoskeletons', 'Powered Exoskeletons', ['robotics', 'battlefield_medicine'], { atkLand: 0.05 }, 'Soldiers who carry more and march further.');
+m(3, 'war', 'anti_satellite', 'Anti-Satellite Weapons', ['hypersonic_missiles', 'satellite_constellations'], { covert: 0.05, atk: 0.03 }, 'Blind an enemy by destroying its eyes in orbit.');
+m(4, 'war', 'sixth_gen_fighters', 'Sixth-Generation Air Power', ['stealth_tech', 'military_ai'], { atkAir: 0.1, defAir: 0.08 }, 'Crewed fighters leading swarms of loyal-wingman drones.');
+m(4, 'war', 'military_ai', 'Military AI', ['artificial_intelligence', 'electronic_warfare'], { atk: 0.06, xp: 0.15 }, 'AI that plans, targets and commands at machine speed.');
+m(4, 'war', 'railguns', 'Railguns', ['advanced_materials', 'hypersonic_missiles'], { atkSea: 0.1 }, 'Electromagnetic guns firing projectiles at Mach 7.');
+m(5, 'war', 'autonomous_armies', 'Autonomous Armies', ['military_ai', 'swarm_robotics'], { atk: 0.1, manpower: 0.3 }, 'Whole formations without a single soldier.');
+m(4, 'war', 'swarm_robotics', 'Swarm Robotics', ['loitering_munitions', 'robotics'], { atk: 0.05 }, 'Thousands of small robots acting as one.');
+// intelligence & cyber
+m(1, 'intel', 'signals_intelligence', 'Signals Intelligence', ['cyber_warfare'], { covert: 0.08 }, 'Intercepts, satellites and the great listening stations.');
+m(2, 'intel', 'offensive_cyber', 'Offensive Cyber Operations', ['signals_intelligence'], { covert: 0.1 }, 'Malware that can switch off a power grid or a pipeline.');
+m(2, 'intel', 'disinformation', 'Information Warfare', ['social_media', 'signals_intelligence'], { covert: 0.08, pc: 0.05 }, 'Bot farms, troll factories and narrative campaigns.');
+m(2, 'intel', 'election_security', 'Election Security', ['cyber_warfare'], { stability: 0.004, terror: 0.1 }, 'Hardened voting systems and counter-interference units.');
+m(3, 'intel', 'zero_day_arsenal', 'Zero-Day Arsenal', ['offensive_cyber'], { covert: 0.12 }, 'Stockpiled unknown vulnerabilities, ready for war.');
+m(3, 'intel', 'deepfake_detection', 'Synthetic Media Forensics', ['disinformation', 'machine_learning'], { approval: 0.02, terror: 0.1 }, 'Tell real speeches from fabricated ones.');
+m(4, 'intel', 'quantum_cryptography', 'Quantum Cryptography', ['quantum_computing', 'zero_day_arsenal'], { covert: 0.1, terror: 0.15 }, 'Unbreakable communications, and broken enemy codes.');
+// science & computing
+m(1, 'lore', 'cloud_computing', 'Cloud Computing', ['internet'], { research: 0.05, wealth: 0.04 }, 'Computing as a utility, from hyperscale datacentres.');
+m(1, 'lore', 'five_g', '5G Networks', ['internet'], { wealth: 0.04, research: 0.03 }, 'Fast mobile networks for phones, factories and cars.');
+m(2, 'lore', 'advanced_chips', 'Advanced Semiconductors', ['semiconductors', 'cloud_computing'], { research: 0.08, prod: 0.05 }, 'Leading-edge chips: the most valuable factories on Earth.');
+m(2, 'lore', 'exascale', 'Exascale Supercomputing', ['advanced_chips'], { research: 0.08 }, 'A billion billion calculations a second.');
+m(3, 'lore', 'large_language_models', 'Large Language Models', ['machine_learning', 'advanced_chips'], { research: 0.1, wealth: 0.06 }, 'Machines that read, write and reason in every language.');
+m(3, 'lore', 'quantum_computing', 'Quantum Computing', ['exascale'], { research: 0.12 }, 'Qubits that solve what classical machines cannot.');
+m(4, 'lore', 'brain_interfaces', 'Brain-Computer Interfaces', ['large_language_models', 'crispr'], { research: 0.08, approval: 0.02 }, 'Thought becomes command.');
+m(5, 'lore', 'general_ai', 'Artificial General Intelligence', ['artificial_intelligence', 'quantum_computing', 'large_language_models'], { research: 0.4, prod: 0.2, wealth: 0.15 }, 'A mind as capable as ours, and then more so.');
+// space & naval
+m(1, 'sea', 'reusable_rockets', 'Reusable Rockets', ['space_flight'], { research: 0.03 }, 'Boosters that land and fly again: space becomes cheap.');
+m(2, 'sea', 'satellite_constellations', 'Satellite Constellations', ['reusable_rockets', 'five_g'], { research: 0.05, wealth: 0.05 }, 'Thousands of satellites: internet, imaging and targeting everywhere.');
+m(2, 'sea', 'unmanned_naval', 'Unmanned Naval Vessels', ['autonomous_systems'], { atkSea: 0.06 }, 'Sea drones that sink warships.');
+m(2, 'sea', 'space_station', 'Orbital Station', ['reusable_rockets'], { research: 0.06 }, 'A permanent laboratory in orbit.');
+m(3, 'sea', 'space_force', 'Space Command', ['satellite_constellations', 'missile_defense'], { intercept: 0.1, defAir: 0.05 }, 'A military service for the high frontier.');
+m(4, 'sea', 'lunar_base', 'Lunar Base', ['space_station', 'small_modular_reactors'], { research: 0.1, pc: 0.08 }, 'A permanent settlement on the Moon.');
+m(5, 'sea', 'mars_mission', 'Crewed Mission to Mars', ['lunar_base', 'orbital_industry'], { research: 0.12, approval: 0.06, pc: 0.12 }, 'Humans walk on another planet.');
+// energy & industry
+m(1, 'craft', 'shale', 'Shale Extraction', ['renewables'], { oil: 0.3, energy: 0.05 }, 'Fracking unlocks oil and gas from tight rock.');
+m(1, 'craft', 'lng', 'LNG Infrastructure', ['shale'], { energy: 0.08, tradeBonus: 0.03 }, 'Liquefied gas shipped across oceans.');
+m(1, 'craft', 'additive_manufacturing', '3D Printing', ['internet'], { prod: 0.06, build: 0.05 }, 'Print parts, homes and engines on demand.');
+m(2, 'craft', 'grid_storage', 'Grid-Scale Storage', ['renewables', 'batteries'], { energy: 0.12 }, 'Giant batteries smooth the sun and wind.');
+m(2, 'craft', 'rare_earth_refining', 'Rare Earth Refining', ['advanced_chips'], { metal: 0.15, prod: 0.04 }, 'Break a near-monopoly on the elements of modern industry.');
+m(2, 'craft', 'smart_factories', 'Smart Factories', ['additive_manufacturing', 'five_g'], { prod: 0.1, wealth: 0.05 }, 'Industry 4.0: sensors, robots and AI on every line.');
+m(3, 'craft', 'small_modular_reactors', 'Small Modular Reactors', ['nuclear_power', 'grid_storage'], { energy: 0.2 }, 'Factory-built reactors for every city and port.');
+m(3, 'craft', 'green_hydrogen', 'Green Hydrogen', ['grid_storage'], { energy: 0.08, oil: 0.1, approval: 0.02 }, 'Clean fuel for steel, ships and planes.');
+m(3, 'craft', 'carbon_capture', 'Carbon Capture', ['green_hydrogen'], { approval: 0.03, diplo: 0.05 }, 'Pull carbon back out of the air.');
+m(4, 'craft', 'advanced_materials', 'Advanced Materials', ['smart_factories', 'quantum_computing'], { metal: 0.25, prod: 0.08 }, 'Graphene, metamaterials and self-healing alloys.');
+m(5, 'craft', 'superconductors', 'Room-Temperature Superconductors', ['advanced_materials', 'fusion'], { energy: 0.4, prod: 0.15 }, 'Lossless power lines and levitating trains.');
+// health & agriculture
+m(1, 'food', 'mrna_vaccines', 'mRNA Vaccines', ['vaccines', 'genetic_engineering'], { popGrowth: 0.05, stability: 0.003 }, 'Vaccines designed in days, made in weeks.');
+m(1, 'food', 'precision_agriculture', 'Precision Agriculture', ['genetic_engineering', 'internet'], { food: 0.25 }, 'Satellites and sensors tell every field what it needs.');
+m(1, 'food', 'telemedicine', 'Telemedicine', ['internet'], { approval: 0.02, popGrowth: 0.03 }, 'A doctor in every phone.');
+m(2, 'food', 'crispr', 'CRISPR Medicine', ['mrna_vaccines'], { popGrowth: 0.05, approval: 0.02 }, 'Gene editing cures inherited disease.');
+m(2, 'food', 'pandemic_preparedness', 'Pandemic Preparedness', ['mrna_vaccines'], { stability: 0.005 }, 'Stockpiles, surveillance and surge capacity for the next plague.');
+m(2, 'food', 'desalination', 'Large-Scale Desalination', ['renewables'], { food: 0.15, housing: 0.05 }, 'Fresh water from the sea for deserts and cities.');
+m(3, 'food', 'lab_grown_food', 'Cultivated Protein', ['crispr', 'vertical_farming'], { food: 0.3 }, 'Meat without animals, at scale.');
+m(4, 'food', 'longevity', 'Longevity Medicine', ['crispr', 'large_language_models'], { popGrowth: 0.08, approval: 0.04 }, 'Slowing ageing itself.');
+// governance & society
+m(1, 'civic', 'e_government', 'E-Government', ['internet'], { pc: 0.06, lawCost: -0.05 }, 'Online services, digital records and smart bureaucracy.');
+m(2, 'civic', 'digital_identity', 'Digital Identity', ['e_government'], { pc: 0.05, unrestMin: -0.02 }, 'Every citizen known to the state, for better or worse.');
+m(2, 'civic', 'smart_cities', 'Smart Cities', ['five_g', 'e_government'], { housing: 0.1, approval: 0.02 }, 'Sensors, autonomous transit and efficient utilities.');
+m(2, 'civic', 'soft_power', 'Soft Power', ['social_media'], { diplo: 0.1, approval: 0.02 }, 'Culture, universities and media that win hearts abroad.');
+m(3, 'civic', 'climate_accords', 'Climate Leadership', ['carbon_capture', 'soft_power'], { diplo: 0.1, approval: 0.03 }, 'Lead the world\'s response to a warming planet.');
+m(3, 'civic', 'basic_income', 'Universal Basic Income', ['smart_factories', 'digital_identity'], { approval: 0.06, stability: 0.004, wealth: -0.05 }, 'A cheque for every citizen as automation spreads.');
+m(4, 'civic', 'algorithmic_governance', 'Algorithmic Governance', ['large_language_models', 'digital_identity'], { pc: 0.1, lawCost: -0.1 }, 'AI drafts the laws and runs the ministries.');
+// economy & finance
+m(1, 'econ', 'fintech', 'Fintech', ['internet'], { wealth: 0.05 }, 'Mobile banking reaches the unbanked billions.');
+m(1, 'econ', 'free_trade_agreements', 'Free Trade Agreements', ['globalization'], { tradeBonus: 0.08, wealth: 0.03 }, 'Lower tariffs and common rules with partners.');
+m(2, 'econ', 'sovereign_wealth', 'Sovereign Wealth Fund', ['fintech'], { wealth: 0.06 }, 'Invest the nation\'s savings across the world.');
+m(2, 'econ', 'digital_currency', 'Central Bank Digital Currency', ['fintech', 'digital_identity'], { wealth: 0.05, covert: 0.03 }, 'Programmable state money, and a way around foreign payment systems.');
+m(2, 'econ', 'reshoring', 'Strategic Reshoring', ['smart_factories'], { prod: 0.06, metal: 0.08 }, 'Bring critical supply chains home.');
+m(3, 'econ', 'platform_economy', 'Platform Economy', ['large_language_models', 'fintech'], { wealth: 0.1 }, 'Digital giants that broker the whole economy.');
+m(3, 'econ', 'sanctions_resilience', 'Sanctions Resilience', ['digital_currency', 'reshoring'], { wealth: 0.04, tradeBonus: 0.05 }, 'Alternative payment rails, barter and shadow fleets.');
+m(4, 'econ', 'automation_dividend', 'Automation Dividend', ['platform_economy', 'military_ai'], { wealth: 0.15, prod: 0.1 }, 'Robots and AI do most of the work: the gains are vast.');
+
+const TIERS = { internet: 1, social_media: 1, globalization: 1, renewables: 1, cyber_warfare: 1, counter_terrorism: 1, precision_munitions: 1, genetic_engineering: 1, electric_vehicles: 2,
+  machine_learning: 2, robotics: 2, network_warfare: 2, stealth_tech: 2, missile_defense: 2, mass_surveillance: 2, autonomous_systems: 2, artificial_intelligence: 3, directed_energy: 3,
+  vertical_farming: 3, technocracy: 4, fusion: 4, orbital_industry: 4, interstellar_travel: 5 };
+for (const x of TECHS) if (x.age === 9 && !x.tier) x.tier = TIERS[x.id] || 2;
+// modern technologies cost by tier: weeks for a superpower's laboratories, years for a small state
+export const tierCost = k => Math.round(26000 * Math.pow(1.38, k));
+export const TECH = {}; for (const x of TECHS) { x.cost = x.tier ? tierCost(x.tier) : Math.round(techCost(x.age) * (0.85 + 0.3 * (x.req.length ? 1 : 0) + (x.req.length > 1 ? 0.1 : 0))); TECH[x.id] = x; }
 export const AGE_TECHS = AGES.map((_, a) => TECHS.filter(x => x.age === a));
 
 export function canResearch(N, id) { const x = TECH[id]; return !!x && !N.techs[id] && x.age <= N.age && x.req.every(r => N.techs[r]); }

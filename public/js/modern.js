@@ -136,8 +136,12 @@ function createCountry(sim, c, tiles, code) {
   for (const [min, list] of BASELINE) if (dev >= min) for (const id of list) techs[id] = 1;
   if (c.mil >= 45) { techs.stealth_tech = 1; techs.missile_defense = 1; techs.autonomous_systems = 1; }
   if (auth && dev > 0.3) techs.mass_surveillance = 1;
+  // the frontier: a share of each tier according to development and the scale of the economy
+  const reach = dev * 0.6 + Math.min(1, c.gdp / 5000) * 0.5;
+  const odds = [0, clamp(reach * 1.2 - 0.15, 0, 1), clamp(reach - 0.45, 0, 1), clamp(reach - 0.85, 0, 1) * 0.6, 0, 0];
+  for (const x of TECHS) if (x.age === MODERN_AGE && x.tier && Math.random() < odds[x.tier]) techs[x.id] = 1;
   if (!c.nk) for (const id of NUCLEAR_TECHS) delete techs[id];
-  for (const x of TECHS) if (techs[x.id] && x.req.some(r => !techs[r])) delete techs[x.id]; // keep the tree consistent
+  for (let changed = true; changed;) { changed = false; for (const x of TECHS) if (techs[x.id] && x.req.some(r => !techs[r])) { delete techs[x.id]; changed = true; } } // keep the tree consistent
   const N = {
     code, name: c.s, adj: c.adj, official: c.f, country: c.n, color: c.col || civColor(parseInt(code.slice(1), 10) * 7 + 3),
     culture: cultureOf(T[capital]), alive: true, ai: code !== s.player, capital, age: MODERN_AGE, ageAdv: null,
@@ -151,7 +155,7 @@ function createCountry(sim, c, tiles, code) {
     food: 0, wood: 0, stone: 0, metal: 0, wealth: 0, oil: 0, queue: [], exhaustion: 0, st: {}, access: {}, known: [],
     warheads: Math.round((c.nk || 0) / 25), warheadProg: 0, opCooldown: {}, directives: { industry: 'off', defense: 'off', science: 'off', foreign: 'off', budget: 0.35 }, delegateEvents: false,
     aiBonus: code === s.player ? 0 : (s.difficulty || 0), formed: null, born: 0,
-    gdp: c.gdp, popM: c.pop, mil: c.mil, blocs: c.b, dev, faith0: c.fa, homeTiles: tiles.length,
+    gdp: c.gdp, popM: c.pop, mil: c.mil, blocs: c.b, dev, faith0: c.fa, homeTiles: tiles.length, proliferator: c.n === 'Iran',
     growth: GROWTH[c.n] ?? clamp(0.026 - 0.025 * dev, -0.002, 0.026), // population growth per year
   };
   s.nations[code] = N;

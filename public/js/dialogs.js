@@ -2,7 +2,7 @@
 import { AGES } from './eras.js';
 import { UNITS, LINES, LINE_ORDER, bestOf } from './units.js';
 import { RES } from './resources.js';
-import { TECHS, TECH, BRANCHES, canResearch, AGE_TECHS } from './tech.js';
+import { TECHS, TECH, BRANCHES, canResearch, AGE_TECHS, MODERN_BRANCH } from './tech.js';
 import { ROLES, CABINET, TRAITS, resolveEvent, roleTitle, styleName } from './gov.js';
 import { convene, execute, deny, confidence, MEETING_COOLDOWN_DAYS } from './cabinet.js';
 import { G, $, esc, fmt, pct, popStr, toast, dstr, stars, avatar, costStr, ICON } from './ui.js';
@@ -177,6 +177,7 @@ export function openTree() {
   const sim = G.sim, N = sim.s.nations[sim.s.player], R = N.research;
   if (G.treeAge === null || G.treeAge === undefined) G.treeAge = N.age;
   const render = () => {
+    if (sim.s.modern) return renderModern();
     const a = G.treeAge;
     let h = `<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;gap:12px"><div><div class="kicker">Tree of knowledge · ${Object.keys(N.techs).length} of ${TECHS.length} known</div><div style="font-size:22px;font-weight:800;color:var(--text-hi)">${AGES[a].name}</div><div class="small muted">${esc(AGES[a].blurb)} ${fmt(N.st.rp)} learning per day. Click a technology to study it, or a locked one to queue it with its prerequisites.</div></div><button class="btn" id="closetree">Close</button></div>
       <div class="agetabs">${AGES.map((A, k) => { const L = AGE_TECHS[k]; const have = L.filter(x => N.techs[x.id]).length; return `<button class="agetab ${k === a ? 'on' : ''} ${k > N.age ? 'future' : ''}" data-age="${k}" style="--ac:${A.color}">${A.short}<small>${have}/${L.length}</small></button>`; }).join('')}</div><div class="tree">`;
@@ -200,6 +201,34 @@ export function openTree() {
       if (canResearch(N, id)) { if (R.cur && R.cur !== id) R.queue.unshift(R.cur); R.cur = id; R.queue = R.queue.filter(x => x !== id); }
       else queueTech(N, id);
       render();
+    };
+  };
+  // the modern frontier: tabs by tier, columns by branch
+  const TIER_NAME = ['', 'Fielded in 2025', 'Near future', 'Next decade', 'Frontier', 'Breakthroughs'];
+  const renderModern = () => {
+    const k = G.treeTier ||= 1;
+    const mod = TECHS.filter(x => x.age === 9 && x.tier);
+    let h = `<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;gap:12px"><div><div class="kicker">Research & development · ${mod.filter(x => N.techs[x.id]).length} of ${mod.length} frontier technologies</div><div style="font-size:22px;font-weight:800;color:var(--text-hi)">Tier ${k}: ${TIER_NAME[k]}</div><div class="small muted">${fmt(N.st.rp)} research per day. Technologies other nations already have are cheaper to develop. Click one to study it, or a locked one to queue it with its prerequisites.</div></div><button class="btn" id="closetree">Close</button></div>
+      <div class="agetabs">${[1, 2, 3, 4, 5].map(j => { const L = mod.filter(x => x.tier === j); const have = L.filter(x => N.techs[x.id]).length; return `<button class="agetab ${j === k ? 'on' : ''}" data-tier="${j}" style="--ac:${['', '#7fb4e8', '#57d2ff', '#a88be8', '#e0a83e', '#ff7a6b'][j]}">Tier ${j}<small>${have}/${L.length}</small></button>`; }).join('')}</div><div class="tree" style="grid-template-columns:repeat(8, minmax(130px, 1fr))">`;
+    for (const b of BRANCHES) {
+      const list = mod.filter(x => x.branch === b.id && x.tier === k);
+      h += `<div><div class="col-h" style="background:color-mix(in srgb, ${b.color} 18%, transparent);color:${b.color}">${MODERN_BRANCH[b.id] || b.name}</div>`;
+      for (const t of list) {
+        const st = N.techs[t.id] ? 'done' : canResearch(N, t.id) ? 'avail' : 'locked';
+        const cost = sim.techCostFor(N, t.id);
+        h += `<div class="tnode ${st} ${R.cur === t.id ? 'cur' : ''} ${R.queue.includes(t.id) ? 'queued' : ''}" style="--bc:${b.color}" data-t="${t.id}" title="${esc(t.desc + (t.req.length ? ' Requires: ' + t.req.map(q => TECH[q]?.name).join(', ') : ''))}"><div class="tn">${esc(t.name)}</div><div class="tc">${st === 'done' ? '✓' : fmt(cost)}</div><div class="td">${esc(t.desc)}</div></div>`;
+      }
+      h += '</div>';
+    }
+    h += '</div>';
+    $('#tree-card').innerHTML = h;
+    $('#closetree').onclick = closeTree;
+    for (const b of document.querySelectorAll('[data-tier]')) b.onclick = () => { G.treeTier = +b.dataset.tier; renderModern(); };
+    for (const n of document.querySelectorAll('.tnode')) n.onclick = () => {
+      const id = n.dataset.t; if (N.techs[id]) return;
+      if (canResearch(N, id)) { if (R.cur && R.cur !== id) R.queue.unshift(R.cur); R.cur = id; R.queue = R.queue.filter(x => x !== id); }
+      else queueTech(N, id);
+      renderModern();
     };
   };
   render();
