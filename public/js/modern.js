@@ -8,7 +8,7 @@ import { TECHS, TECH, techsBefore } from './tech.js';
 const TECH_AGE = new Proxy({}, { get: (_, id) => TECH[id]?.age });
 import { initGovernment, computeMods, GOV_TYPES } from './gov.js';
 import { onNewNation } from './society.js';
-import { cultureOf, civColor } from './names.js';
+import { cultureOf, civColor, personName } from './names.js';
 
 export const MODERN_AGE = 9;
 export const MODERN_ECON = 0.08; // prices scaled to the GDP-calibrated economy (eras.js setEconomyScale)
@@ -101,7 +101,7 @@ export function setupModern(sim, opts) {
   for (const [a, b] of ALLIANCES) if (at(a) && at(b)) sim.setRel(at(a), at(b), 'alliance');
   // Western aid keeps Ukraine's war economy running (wealth per day)
   if (at('Ukraine')) s.nations[at('Ukraine')].aid = 9;
-  for (const [a, b] of WARS) if (at(a) && at(b)) { sim.setRel(at(a), at(b), 'war'); s.nations[at(a)].exhaustion = 0.25; s.nations[at(b)].exhaustion = 0.35; frontLine(sim, at(a), at(b)); }
+  for (const [a, b] of WARS) if (at(a) && at(b)) { sim.setRel(at(a), at(b), 'war'); s.nations[at(a)].exhaustion = 0.08; s.nations[at(b)].exhaustion = 0.12; frontLine(sim, at(a), at(b)); }
   // the blocs of the world, and the United Nations over them
   s.pacts = []; s.pactId = 1;
   for (const [key, B] of Object.entries(BLOCS)) {
@@ -164,6 +164,10 @@ function createCountry(sim, c, tiles, code) {
   onNewNation(sim, N, { tiles });
   initGovernment(s, N);
   N.gov.type = g;
+  N.gov.leaderName = personName(N.culture, MODERN_AGE);
+  // where the discretionary budget goes: defence, social programmes, infrastructure, research
+  const d = clamp(0.12 + c.mil / 300 + (auth ? 0.06 : 0), 0.1, 0.5), r = clamp(0.1 + dev * 0.15, 0.08, 0.3), soc = clamp(0.25 + dev * 0.2 - (auth ? 0.08 : 0), 0.15, 0.5);
+  const sum = d + r + soc + 0.2; N.budget = { defense: d / sum, social: soc / sum, infra: 0.2 / sum, research: r / sum };
   if (GOV_TYPES[g].democratic) N.gov.nextElection = 24 * (ELECTIONS[c.n] ?? Math.round(60 + Math.random() * 1400));
   N.gov.stability = clamp(0.55 + dev * 0.3 - (g === 'junta' ? 0.15 : 0), 0.3, 0.92);
   N.gov.approval = clamp(0.45 + Math.random() * 0.15 + (auth ? 0.1 : 0), 0.3, 0.75);
@@ -280,6 +284,22 @@ function seedStores(sim, N) {
   for (const k of ['wood', 'stone', 'metal']) N[k] = cap(k) * 0.55;
   N.oil = cap('oil') * (N.blocs?.includes('OPEC') ? 0.85 : 0.35);
   N.wealth = Math.max(50, (st.prod?.wealth || 0) * (30 + 50 * N.dev)); // a few months of revenue: debt-laden states start leaner
+}
+
+// the national budget: shares of discretionary spending shift the nation's priorities (relative to a balanced split)
+export const BUDGET_BASE = { defense: 0.25, social: 0.35, infra: 0.2, research: 0.2 };
+export const BUDGET = {
+  defense: { name: 'Defence', desc: 'Combat strength of your forces and faster arms production.' },
+  social: { name: 'Social programmes', desc: 'Health, pensions, education: approval and stability.' },
+  infra: { name: 'Infrastructure', desc: 'Roads, rail, grids: construction speed and productivity.' },
+  research: { name: 'Research', desc: 'Universities and laboratories: research output.' },
+};
+export function budgetMods(N) {
+  const B = N.budget; if (!B) return;
+  const m = N.mods, dv = k => (B[k] || 0) - BUDGET_BASE[k];
+  m.atk = (m.atk || 0) + dv('defense') * 0.4; m.defLand = (m.defLand || 0) + dv('defense') * 0.4; m.build = (m.build || 0) + dv('defense') * 0.2 + dv('infra') * 1.0;
+  m.approval = (m.approval || 0) + dv('social') * 0.3; m.stability = (m.stability || 0) + dv('social') * 0.01;
+  m.prod = (m.prod || 0) + dv('infra') * 0.3; m.research = (m.research || 0) + dv('research') * 1.2;
 }
 
 // faiths of the real world, replacing the generated ones (called once society has been initialised)

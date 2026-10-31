@@ -109,13 +109,13 @@ export function canJoin(sim, P, c) {
   if (P.doctrines.faith && N.faith !== P.faith) return { ok: false, why: `Only followers of ${s.faiths?.[P.faith]?.name || 'the founding faith'} may join.` };
   const foe = P.members.find(m => sim.atWar(m, c));
   if (foe) return { ok: false, why: `They are at war with a member, the ${sim.nm(foe)}.` };
-  if (pactsOf(sim, c).length >= 3) return { ok: false, why: 'They are already bound to three pacts.' };
+  if (pactsOf(sim, c).length >= (s.modern ? 7 : 3)) return { ok: false, why: `They are already bound to ${s.modern ? 'seven' : 'three'} pacts.` };
   return { ok: true };
 }
 
 export function foundPact(sim, founder, { preset = 'league', name, doctrines } = {}) {
   const s = sim.s, N = s.nations[founder];
-  if (pactsOf(sim, founder).length >= 3) return { ok: false, why: 'You are already bound to three pacts.' };
+  if (pactsOf(sim, founder).length >= (s.modern ? 7 : 3)) return { ok: false, why: `You are already bound to ${s.modern ? 'seven' : 'three'} pacts.` };
   if (founder === s.player && (N.gov.pc || 0) < FOUND_COST) return { ok: false, why: `Founding a pact takes ${FOUND_COST} influence.` };
   const docs = {}; for (const d of doctrines || PRESETS[preset].doctrines) if (DOCTRINES[d]) docs[d] = true;
   if (!Object.keys(docs).length) return { ok: false, why: 'A pact needs at least one doctrine.' };

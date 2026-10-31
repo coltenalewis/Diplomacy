@@ -2,6 +2,7 @@
 import { TECH } from './tech.js';
 import { WONDERS } from './units.js';
 import { personName } from './names.js';
+import { MODERN_EVENTS } from './modern-events.js';
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const pick = a => a[(Math.random() * a.length) | 0];
@@ -276,8 +277,13 @@ export function politicsDaily(sim, N) {
       g.nextElection = s.t + term * 24;
       const won = g.approval + rnd(-0.08, 0.08) >= 0.48;
       if (won) { g.pc += 60; g.stability = clamp(g.stability + 0.08, 0, 1); }
+      else if (s.modern) { // the voters turn you out: a new government, a hostile legislature, a fresh start in the polls
+        g.hostileUntil = s.t + 365 * 24; g.pc = 0; g.approval = 0.52; g.stability = clamp(g.stability - 0.05, 0, 1);
+        g.leaderName = personName(N.culture, N.age);
+      }
       else { g.hostileUntil = s.t + 40 * 24; g.stability = clamp(g.stability - 0.05, 0, 1); }
-      if (N.code === s.player) sim.emit('gov', won ? `Election victory! Your faction keeps its majority (approval ${Math.round(g.approval * 100)}%).` : `Election setback. The opposition controls the assembly for a season: political capital gain is reduced.`, [N.code]);
+      if (N.code === s.player) sim.emit('gov', s.modern ? (won ? `Re-elected! The voters give you another term (approval ${Math.round(g.approval * 100)}%).` : `Defeated at the polls. ${g.leaderName} forms a new government facing a hostile legislature for a year; political capital is gone.`) : won ? `Election victory! Your faction keeps its majority (approval ${Math.round(g.approval * 100)}%).` : `Election setback. The opposition controls the assembly for a season: political capital gain is reduced.`, [N.code], { major: true });
+      else if (s.modern && !won && (N.gdp || 0) > 900) sim.emit('gov', `Election in ${sim.nm(N.code)}: the government is defeated.`, [N.code]);
     }
   } else g.nextElection = null;
   // instability: revolts and coups
@@ -428,9 +434,12 @@ export const EVENTS = [
       { label: 'Pause and audit', fx: (sim, N) => { N.gov.stability += 0.03; return 'The system is sandboxed pending review.'; } }] },
 ];
 
+EVENTS.push(...MODERN_EVENTS);
+
 export function rollEvent(sim, N) {
   const order = [...EVENTS].sort(() => Math.random() - 0.5);
   for (const e of order) {
+    if (!!e.modern !== !!sim.s.modern) continue; // the modern world has its own deck (modern-events.js)
     if (N.lastEvents?.includes(e.id)) continue;
     if ((e.minAge ?? 0) > N.age || (e.maxAge ?? 99) < N.age) continue;
     const ctx = e.when(sim, N); if (!ctx) continue;

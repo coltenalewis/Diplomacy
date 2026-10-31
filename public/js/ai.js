@@ -434,7 +434,7 @@ export class AI {
       return;
     }
     const E = s.nations[e];
-    if (E.exhaustion > 0.25 || this.power(e) < this.power(c) * 1.6 || Math.random() < 0.2) sim.makePeace(c, e);
+    if (s.modern ? (E.exhaustion > 0.5 || this.power(e) < this.power(c) * 0.8 || Math.random() < 0.02) : (E.exhaustion > 0.25 || this.power(e) < this.power(c) * 1.6 || Math.random() < 0.2)) sim.makePeace(c, e); // modern wars grind on until one side is spent
   }
 
   // ------------------------------------------------------------ operations

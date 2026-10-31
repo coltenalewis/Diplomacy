@@ -14,7 +14,7 @@ import { initGovernment, computeMods, unitMods, politicsDaily, rollEvent, refres
 import { FORMABLES, modernFormables, formProgress } from './formables.js';
 import { cultureOf, civName, civColor } from './names.js';
 import { slerpLL } from './world.js';
-import { setupModern, modernFaiths, START_YEAR, fixArticles, worldMarket, MODERN_ECON } from './modern.js';
+import { setupModern, modernFaiths, START_YEAR, fixArticles, worldMarket, MODERN_ECON, budgetMods } from './modern.js';
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const rnd = (a, b) => a + Math.random() * (b - a);
@@ -1038,6 +1038,8 @@ export class Sim {
       if (!N.alive) continue;
       computeMods(s, N);
       pactMods(this, N);
+      budgetMods(N);
+      if (s.modern && N.code === s.player) { const h = (N.gov.hist ||= []); h.push(Math.round(N.gov.approval * 100)); if (h.length > 365) h.shift(); }
       const st = this.recalcNation(N.code);
       const m = N.mods;
       for (const k of STOCKS) {
@@ -1112,7 +1114,7 @@ export class Sim {
     // player narrative events
     const P = s.nations[s.player];
     if (P.alive && !s.pendingEvent && s.t >= s.nextEventAt) {
-      s.nextEventAt = s.t + Math.round(rnd(16, 34)) * 24;
+      s.nextEventAt = s.t + Math.round(s.modern ? rnd(7, 14) : rnd(16, 34)) * 24;
       const ev = rollEvent(this, P);
       if (ev) { s.pendingEvent = ev; for (const f of this.listeners) f({ kind: 'rp', ev }); }
     }

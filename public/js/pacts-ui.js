@@ -130,6 +130,21 @@ const VOTE = { yes: ['For', 'pos'], no: ['Against', 'neg'], abstain: ['Abstain',
 // the chamber: a semicircle of seats, one per member, lit by its vote
 function chamberSVG(sim, X, votes) {
   const n = X.members.length, R = 120, cx = 160, cy = 140;
+  const ringOf = v => v === 'yes' ? '#5ee39a' : v === 'no' ? '#ff6b6b' : v === 'abstain' ? '#8a93a6' : '#e9c46a';
+  if (n > 24) { // a great assembly: rows of small seats, filled by vote, the veto powers ringed in gold
+    const rank = v => ['yes', 'abstain', undefined, 'no'].indexOf(v);
+    const rows = Math.ceil(n / 30), order = X.members.slice().sort((a, b) => rank(votes[a]) - rank(votes[b]));
+    let k = 0, dots = '';
+    for (let row = 0; row < rows; row++) {
+      const rr = 62 + row * (64 / Math.max(1, rows - 1)), cnt = Math.ceil((n - k) / (rows - row));
+      for (let j = 0; j < cnt && k < n; j++, k++) {
+        const m = order[k], a = Math.PI * (cnt === 1 ? 0.5 : j / (cnt - 1)), x = cx - Math.cos(a) * rr, y = cy - Math.sin(a) * rr * 0.9;
+        const veto = X.veto?.includes(m);
+        dots += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${veto ? 4.6 : 3.4}" fill="${ringOf(votes[m])}" stroke="${veto ? '#e9c46a' : 'none'}" stroke-width="1.6"><title>${esc(sim.nm(m))}${veto ? ' (veto)' : ''}</title></circle>`;
+      }
+    }
+    return `<svg class="chamber-svg" viewBox="0 0 320 175">${dots}<text x="160" y="150" text-anchor="middle" font-size="11" fill="#e9c46a">${esc(X.name)}</text></svg>`;
+  }
   const seats = X.members.map((m, k) => {
     const a = Math.PI * (n === 1 ? 0.5 : k / (n - 1)), x = cx - Math.cos(a) * R, y = cy - Math.sin(a) * R * 0.85;
     const v = votes[m], ring = v === 'yes' ? '#5ee39a' : v === 'no' ? '#ff6b6b' : v === 'abstain' ? '#8a93a6' : '#e9c46a';
@@ -144,7 +159,7 @@ function renderSession() {
     const L = ses.result;
     card.innerHTML = `<div class="ek">${esc(X?.name || 'The council')}</div><h2>${L.passed ? 'The motion passes' : 'The motion fails'}</h2>
       ${X ? chamberSVG(sim, X, L.votes) : ''}
-      <p><b>${esc(L.text)}</b></p><p class="big2 ${L.passed ? 'pos' : 'neg'}">${L.yes} for · ${L.no} against${L.abst ? ` · ${L.abst} abstained` : ''}</p>
+      <p><b>${esc(L.text)}</b></p><p class="big2 ${L.passed ? 'pos' : 'neg'}">${L.yes} for · ${L.no} against${L.abst ? ` · ${L.abst} abstained` : ''}${L.vetoed ? ` · <span class="neg">vetoed by ${esc(sim.nm(L.vetoed))}</span>` : ''}</p>
       <p>${esc(L.outcome)}</p>
       <div class="actions" style="justify-content:flex-end"><button class="btn go" id="ps-close">Adjourn</button></div>`;
     $('#ps-close').onclick = closePactBox;
@@ -164,11 +179,13 @@ function renderSession() {
   const mo = S.motion;
   const others = X.members.filter(m => m !== Pl);
   const t = tally({ ...X, session: { ...S, votes: Object.fromEntries(others.map(m => [m, S.votes[m]])) } });
+  const more = others.length > 24 ? others.length - 14 : 0;
   card.innerHTML = `<div class="ek">${esc(X.name)} · session of ${dstr()}${chair ? ' · you chair' : ` · chaired by the ${esc(sim.nm(X.chair))}`}</div>
     <h2>${esc(mo.text)}</h2>
     <p class="muted">${esc(mo.fx)}${mo.super ? '' : ' Passes with a simple majority of the votes cast.'}</p>
     ${chamberSVG(sim, X, S.votes)}
-    <div class="vote-list">${others.map(m => { const v = S.votes[m] || 'abstain'; return `<div class="row"><span><span class="flagchip" style="background:${sim.col(m)}"></span>${esc(sim.nm(m))} ${repChips(s.nations[m], 2)}</span><span class="${VOTE[v][1]}">${VOTE[v][0]}</span></div>`; }).join('')}</div>
+    ${X.veto?.length ? `<div class="small" style="margin:4px 0">Permanent members can veto: ${X.veto.map(m => `<span class="${S.votes[m] === 'no' ? 'neg' : S.votes[m] === 'yes' ? 'pos' : 'muted'}">${esc(sim.nm(m))}${m === Pl ? ' (you)' : ''}</span>`).join(', ')}. One vote against kills the motion.</div>` : ''}
+    <div class="vote-list">${(others.length > 24 ? others.slice().sort((a, b) => (X.veto?.includes(b) - X.veto?.includes(a)) || (sim.score(b) - sim.score(a))).slice(0, 14) : others).map(m => { const v = S.votes[m] || 'abstain'; return `<div class="row"><span><span class="flagchip" style="background:${sim.col(m)}"></span>${esc(sim.nm(m))} ${repChips(s.nations[m], 2)}</span><span class="${VOTE[v][1]}">${VOTE[v][0]}</span></div>`; }).join('')}${more ? `<div class="small muted" style="padding:4px 2px">and ${more} more members</div>` : ''}</div>
     <p class="small">Before your vote: <b class="pos">${t.yes} for</b>, <b class="neg">${t.no} against</b>${t.abst ? `, ${t.abst} abstaining` : ''}. Members remember who voted with them and who against.</p>
     <div class="vote-actions"><button class="btn danger" data-vote="no">Vote against</button><button class="btn" data-vote="abstain">Abstain</button><button class="btn go" data-vote="yes">Vote for</button></div>`;
   for (const b of card.querySelectorAll('[data-vote]')) b.onclick = () => {

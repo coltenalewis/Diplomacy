@@ -3,7 +3,7 @@ import { AGES, ageScale } from './eras.js';
 import { UNITS, LINES, LINE_ORDER, bestOf, SETTLEMENTS, BUILDINGS, BUILD_ORDER, WONDERS } from './units.js';
 import { TERRAIN, RES, IMPROVEMENTS, IMP_ORDER, IMP_CAP, STRATEGIC, LUXURIES, known } from './resources.js';
 import { TECHS, TECH, BRANCHES, canResearch, ageProgress, AGE_TECHS, ADVANCE_SHARE, MODERN_BRANCH } from './tech.js';
-import { GOV_TYPES, LAWS, ROLES, CABINET, TRAITS, lawOpt, lawVisible, canEnact, enact, reform, reformCost, appoint, hireCost, lawCost, govAvailable, styleName, roleTitle, charTitle } from './gov.js';
+import { GOV_TYPES, LAWS, ROLES, CABINET, TRAITS, computeMods, lawOpt, lawVisible, canEnact, enact, reform, reformCost, appoint, hireCost, lawCost, govAvailable, styleName, roleTitle, charTitle } from './gov.js';
 import { formProgress } from './formables.js';
 import { GOODS } from './sim.js';
 import { TRADE_WILL, TRADE_FLOOR, addTradeGoal } from './ai.js';
@@ -13,7 +13,8 @@ import { renderSociety, tileSocietyHTML } from './society-ui.js';
 import { plagueStatus } from './crises.js';
 import { lineOptions } from './units.js';
 import { repChips, repSection, pactsListHTML, bindPactsList, renderPactPage, answeredCall, applyPactProposal } from './pacts-ui.js';
-import { repOpinion, pactsOf, canJoin, invite } from './pacts.js';
+import { repOpinion, pactsOf, canJoin, invite, pactMods } from './pacts.js';
+import { BUDGET, BUDGET_BASE, budgetMods } from './modern.js';
 
 const REL_LABEL = { war: 'At war', peace: 'Peace', nap: 'Non-aggression', alliance: 'Alliance' };
 const traitChips = c => c.traits.map(t => `<span class="trait ${['Corrupt', 'Ambitious'].includes(t) ? 'bad' : ''}" title="${esc(TRAITS[t]?.desc || '')}">${t}</span>`).join('');
@@ -521,7 +522,9 @@ function renderGov(host) {
     <div class="grid2"><span>Influence</span><span>${Math.floor(g.pc)} (+${pcRate.toFixed(2)}/day)</span><span>War weariness</span><span>${pct(N.exhaustion)}</span></div>
     <div style="margin-top:10px"><button class="btn go" data-convene="1" ${cabinetReady() ? '' : 'disabled'}>${cabinetReady() ? 'Convene the council' : 'The council met recently'}</button></div></div>`;
   void ruler;
-  // forms of government
+  if (s.modern) h += leadershipHTML(sim, N);
+  // forms of government (not in the modern world: constitutions do not change by menu)
+  if (!s.modern) {
   h += `<div class="sec"><div class="sec-title">Forms of government</div><div class="small muted" style="margin-bottom:6px">Governments evolve as your people learn. Changing costs ${reformCost(N)} influence and shakes stability.</div>`;
   for (const [k, G2] of Object.entries(GOV_TYPES)) {
     if (G2.coupOnly && g.type !== k) continue;
@@ -531,6 +534,7 @@ function renderGov(host) {
     h += `<div class="govrow ${cur ? 'cur' : av ? '' : 'locked'}"><div><div class="nm">${G2.name}${cur ? ' <span class="small" style="color:var(--gold)">current</span>' : ''}</div><div class="ds">${esc(G2.desc)} <span class="muted">${fx}</span></div></div><div>${cur ? '' : av ? `<button class="btn sm" data-reform="${k}" ${g.pc >= reformCost(N) ? '' : 'disabled'}>Adopt</button>` : `<span class="small muted">${G2.age > N.age ? AGES[G2.age].short + ' Age' : TECH[G2.tech]?.name || ''}</span>`}</div></div>`;
   }
   h += '</div>';
+  }
   // council
   h += `<div class="sec"><div class="sec-title">Council</div>`;
   for (const role of CABINET) {
@@ -572,6 +576,7 @@ function renderGov(host) {
     h += `<div class="sec"><div class="sec-title">Strategic arsenal</div><div class="grid2"><span>Warheads</span><span>${N.warheads || 0}</span><span>Nuclear program levels</span><span>${fac}</span><span>Production</span><span>${N.techs.nuclear_weapons && fac >= 2 && g.laws.nuclear !== 'disarm' ? `1 per ${Math.round(40 / fac)} days` : 'none (needs Nuclear Weapons and a Weapons Complex)'}</span><span>Delivery</span><span>${N.techs.icbm ? 'ICBM (global)' : 'Bombers only'}</span><span>Missile defense</span><span>${pct(N.mods.intercept || 0)}</span></div></div>`;
   }
   if (!setHTML(host, h)) return;
+  if (s.modern) bindBudget(host, sim, N);
   for (const b of host.querySelectorAll('[data-repl]')) b.onclick = () => { G.replRole = G.replRole === b.dataset.repl ? null : b.dataset.repl; renderPanel(true); };
   for (const b of host.querySelectorAll('[data-hire]')) b.onclick = () => { const r = appoint(sim, N, b.dataset.role, +b.dataset.hire); if (!r.ok) toast('Court', r.why, 'warn'); else toast('Court', `${s.chars[+b.dataset.hire].name} appointed.`, 'good'); G.replRole = null; renderPanel(true); };
   for (const b of host.querySelectorAll('[data-law]')) b.onclick = () => { const r = enact(sim, N, b.dataset.law, b.dataset.opt); if (!r.ok) toast('Laws', r.why, 'warn'); renderPanel(true); };
@@ -608,6 +613,33 @@ function renderAges(host) {
   for (const b of host.querySelectorAll('[data-res]')) b.onclick = () => { if (R.cur && R.cur !== b.dataset.res) R.queue.unshift(R.cur); R.cur = b.dataset.res; R.queue = R.queue.filter(x => x !== R.cur); renderPanel(true); };
   for (const b of host.querySelectorAll('[data-q]')) b.onclick = () => { queueTech(N, b.dataset.q); renderPanel(true); };
   for (const b of host.querySelectorAll('[data-unq]')) b.onclick = () => { R.queue = R.queue.filter(x => x !== b.dataset.unq); renderPanel(true); };
+}
+// the head of government: leader, the polls, the next election and the national budget
+function leadershipHTML(sim, N) {
+  const g = N.gov, GT = GOV_TYPES[g.type], hist = g.hist || [];
+  const left = g.nextElection ? Math.max(0, Math.ceil((g.nextElection - sim.s.t) / 24)) : null;
+  const win = Math.max(0.02, Math.min(0.98, (g.approval - 0.48) / 0.16 + 0.5));
+  const spark = hist.length > 1 ? (() => { const w = 220, h = 40, pts = hist.slice(-120); const xs = (k) => (k / (pts.length - 1) * w).toFixed(1), ys = v => (h - v / 100 * h).toFixed(1); return `<svg viewBox="0 0 ${w} ${h}" class="spark"><line x1="0" x2="${w}" y1="${ys(50)}" y2="${ys(50)}" stroke="rgba(255,255,255,.15)" stroke-dasharray="3 3"/><polyline fill="none" stroke="var(--teal)" stroke-width="1.6" points="${pts.map((v, k) => xs(k) + ',' + ys(v)).join(' ')}"/></svg>`; })() : '';
+  const B = N.budget || BUDGET_BASE;
+  return `<div class="sec"><div class="sec-title">Head of government</div>
+    <div class="grid2"><span>${esc(GT.ruler)}</span><span><b>${esc(g.leaderName || 'You')}</b></span>
+    ${GT.democratic ? `<span>Next election</span><span>${left !== null ? `in ${left} days` : '—'}</span><span>Re-election chances</span><span class="${win > 0.55 ? 'pos' : win < 0.45 ? 'neg' : ''}">${pct(win)}</span>` : '<span>Mandate</span><span class="muted">no elections: watch stability and the generals</span>'}
+    ${s_hostile(sim, g) ? '<span>Legislature</span><span class="neg">hostile</span>' : ''}</div>
+    ${spark ? `<div class="small muted" style="margin-top:6px">Approval, last ${Math.min(120, hist.length)} days</div>${spark}` : ''}</div>
+    <div class="sec"><div class="sec-title">National budget</div><div class="small muted" style="margin-bottom:6px">How discretionary spending is split. Moving one slider rebalances the others.</div>
+    ${Object.entries(BUDGET).map(([k, b]) => `<div class="bud-row" title="${esc(b.desc)}"><span>${esc(b.name)}</span><input type="range" min="5" max="60" step="1" value="${Math.round((B[k] || 0) * 100)}" data-bud="${k}"><span class="bud-v">${Math.round((B[k] || 0) * 100)}%</span></div>`).join('')}
+    <div class="small muted">${Object.values(BUDGET).map(b => `${b.name}: ${b.desc}`).join(' ')}</div></div>`;
+}
+const s_hostile = (sim, g) => sim.s.t < (g.hostileUntil || 0);
+function bindBudget(host, sim, N) {
+  for (const inp of host.querySelectorAll('[data-bud]')) inp.oninput = () => {
+    const B = N.budget ||= { ...BUDGET_BASE }, k = inp.dataset.bud, v = +inp.value / 100;
+    const others = Object.keys(B).filter(x => x !== k), rest = others.reduce((a, x) => a + B[x], 0) || 1;
+    B[k] = v; for (const x of others) B[x] = Math.max(0.03, B[x] / rest * (1 - v));
+    const tot = Object.values(B).reduce((a, x) => a + x, 0); for (const x in B) B[x] /= tot;
+    for (const el of host.querySelectorAll('[data-bud]')) { el.value = Math.round(B[el.dataset.bud] * 100); el.nextElementSibling.textContent = Math.round(B[el.dataset.bud] * 100) + '%'; }
+  };
+  for (const inp of host.querySelectorAll('[data-bud]')) inp.onchange = () => { computeMods(sim.s, N); pactMods(sim, N); budgetMods(N); sim.recalcNation(N.code); toast('Budget', 'The new budget passes.', 'good'); };
 }
 // research & development in the modern world: output, spending and how far along each tier the nation is
 function modernRnD(sim, N) {
