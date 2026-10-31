@@ -10,7 +10,7 @@ export const AGES = [
   { key: 'industrial', name: 'Industrial Age', short: 'Industrial', from: 1750, to: 1900, color: '#c97a4a', blurb: 'Steam, coal, railways and factories. Nations become machines.' },
   { key: 'modern', name: 'Modern Age', short: 'Modern', from: 1900, to: 1945, color: '#7f9a5a', blurb: 'Electricity, oil, tanks and aircraft. Total war.' },
   { key: 'atomic', name: 'Atomic Age', short: 'Atomic', from: 1945, to: 1990, color: '#e0c33a', blurb: 'The bomb, jets, rockets and the race to space.' },
-  { key: 'information', name: 'Information Age', short: 'Information', from: 1990, to: 2100, color: '#57d2ff', blurb: 'Computers, networks, artificial intelligence and the stars.' },
+  { key: 'information', name: 'Modern Era', short: 'Modern', from: 1990, to: 2100, color: '#57d2ff', blurb: 'The world of 2025 and the decades ahead: networks, AI, drones and the race for space.' },
 ];
 export const NAGES = AGES.length;
 
