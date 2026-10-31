@@ -2,8 +2,8 @@
 import { AGES, ageScale } from './eras.js';
 import { UNITS, LINES, LINE_ORDER, bestOf, SETTLEMENTS, BUILDINGS, BUILD_ORDER, WONDERS } from './units.js';
 import { TERRAIN, RES, IMPROVEMENTS, IMP_ORDER, IMP_CAP, STRATEGIC, LUXURIES, known } from './resources.js';
-import { TECHS, TECH, BRANCHES, canResearch, ageProgress, AGE_TECHS, ADVANCE_SHARE } from './tech.js';
-import { GOV_TYPES, LAWS, ROLES, CABINET, TRAITS, lawOpt, lawVisible, canEnact, enact, reform, reformCost, appoint, hireCost, lawCost, govAvailable, styleName, roleTitle, charTitle } from './gov.js';
+import { TECHS, TECH, BRANCHES, canResearch, ageProgress, AGE_TECHS, ADVANCE_SHARE, MODERN_BRANCH } from './tech.js';
+import { GOV_TYPES, LAWS, ROLES, CABINET, TRAITS, computeMods, lawOpt, lawVisible, canEnact, enact, reform, reformCost, appoint, hireCost, lawCost, govAvailable, styleName, roleTitle, charTitle } from './gov.js';
 import { formProgress } from './formables.js';
 import { GOODS } from './sim.js';
 import { TRADE_WILL, TRADE_FLOOR, addTradeGoal } from './ai.js';
@@ -13,7 +13,8 @@ import { renderSociety, tileSocietyHTML } from './society-ui.js';
 import { plagueStatus } from './crises.js';
 import { lineOptions } from './units.js';
 import { repChips, repSection, pactsListHTML, bindPactsList, renderPactPage, answeredCall, applyPactProposal } from './pacts-ui.js';
-import { repOpinion, pactsOf, canJoin, invite } from './pacts.js';
+import { repOpinion, pactsOf, canJoin, invite, pactMods } from './pacts.js';
+import { BUDGET, BUDGET_BASE, budgetMods } from './modern.js';
 
 const REL_LABEL = { war: 'At war', peace: 'Peace', nap: 'Non-aggression', alliance: 'Alliance' };
 const traitChips = c => c.traits.map(t => `<span class="trait ${['Corrupt', 'Ambitious'].includes(t) ? 'bad' : ''}" title="${esc(TRAITS[t]?.desc || '')}">${t}</span>`).join('');
@@ -521,7 +522,9 @@ function renderGov(host) {
     <div class="grid2"><span>Influence</span><span>${Math.floor(g.pc)} (+${pcRate.toFixed(2)}/day)</span><span>War weariness</span><span>${pct(N.exhaustion)}</span></div>
     <div style="margin-top:10px"><button class="btn go" data-convene="1" ${cabinetReady() ? '' : 'disabled'}>${cabinetReady() ? 'Convene the council' : 'The council met recently'}</button></div></div>`;
   void ruler;
-  // forms of government
+  if (s.modern) h += leadershipHTML(sim, N);
+  // forms of government (not in the modern world: constitutions do not change by menu)
+  if (!s.modern) {
   h += `<div class="sec"><div class="sec-title">Forms of government</div><div class="small muted" style="margin-bottom:6px">Governments evolve as your people learn. Changing costs ${reformCost(N)} influence and shakes stability.</div>`;
   for (const [k, G2] of Object.entries(GOV_TYPES)) {
     if (G2.coupOnly && g.type !== k) continue;
@@ -531,6 +534,7 @@ function renderGov(host) {
     h += `<div class="govrow ${cur ? 'cur' : av ? '' : 'locked'}"><div><div class="nm">${G2.name}${cur ? ' <span class="small" style="color:var(--gold)">current</span>' : ''}</div><div class="ds">${esc(G2.desc)} <span class="muted">${fx}</span></div></div><div>${cur ? '' : av ? `<button class="btn sm" data-reform="${k}" ${g.pc >= reformCost(N) ? '' : 'disabled'}>Adopt</button>` : `<span class="small muted">${G2.age > N.age ? AGES[G2.age].short + ' Age' : TECH[G2.tech]?.name || ''}</span>`}</div></div>`;
   }
   h += '</div>';
+  }
   // council
   h += `<div class="sec"><div class="sec-title">Council</div>`;
   for (const role of CABINET) {
@@ -572,6 +576,7 @@ function renderGov(host) {
     h += `<div class="sec"><div class="sec-title">Strategic arsenal</div><div class="grid2"><span>Warheads</span><span>${N.warheads || 0}</span><span>Nuclear program levels</span><span>${fac}</span><span>Production</span><span>${N.techs.nuclear_weapons && fac >= 2 && g.laws.nuclear !== 'disarm' ? `1 per ${Math.round(40 / fac)} days` : 'none (needs Nuclear Weapons and a Weapons Complex)'}</span><span>Delivery</span><span>${N.techs.icbm ? 'ICBM (global)' : 'Bombers only'}</span><span>Missile defense</span><span>${pct(N.mods.intercept || 0)}</span></div></div>`;
   }
   if (!setHTML(host, h)) return;
+  if (s.modern) bindBudget(host, sim, N);
   for (const b of host.querySelectorAll('[data-repl]')) b.onclick = () => { G.replRole = G.replRole === b.dataset.repl ? null : b.dataset.repl; renderPanel(true); };
   for (const b of host.querySelectorAll('[data-hire]')) b.onclick = () => { const r = appoint(sim, N, b.dataset.role, +b.dataset.hire); if (!r.ok) toast('Court', r.why, 'warn'); else toast('Court', `${s.chars[+b.dataset.hire].name} appointed.`, 'good'); G.replRole = null; renderPanel(true); };
   for (const b of host.querySelectorAll('[data-law]')) b.onclick = () => { const r = enact(sim, N, b.dataset.law, b.dataset.opt); if (!r.ok) toast('Laws', r.why, 'warn'); renderPanel(true); };
@@ -583,15 +588,16 @@ const prog = p => p.parts.reduce((a, pp) => a + Math.min(1, pp.have / Math.max(1
 // ======================================================================= ages & research
 function renderAges(host) {
   const sim = G.sim, s = sim.s, P = s.player, N = s.nations[P], R = N.research;
-  const A = AGES[N.age], nxt = AGES[N.age + 1];
+  const A = AGES[N.age], nxt = s.modern ? null : AGES[N.age + 1];
   const have = AGE_TECHS[N.age].filter(t => N.techs[t.id]).length, total = AGE_TECHS[N.age].length, need = Math.ceil(ADVANCE_SHARE * total);
-  let h = `<div class="card agecard" style="--ac:${A.color}"><div class="kicker">${dstr()}</div><div class="big">${A.name}</div><div class="sub">${esc(A.blurb)}</div>`;
-  if (nxt) {
+  let h = s.modern ? modernRnD(sim, N) : `<div class="card agecard" style="--ac:${A.color}"><div class="kicker">${dstr()}</div><div class="big">${A.name}</div><div class="sub">${esc(A.blurb)}</div>`;
+  if (s.modern) { /* no ages: the frontier summary above */ }
+  else if (nxt) {
     h += `<div class="grid2" style="margin-top:10px"><span>${A.short} technologies</span><span>${have} / ${total} (need ${need})</span></div><div class="meter"><i style="width:${pct(have / total)};background:var(--ac)"></i></div>`;
     if (N.ageAdv) h += `<div class="row" style="margin-top:8px"><span class="hi">Entering the ${nxt.name}</span><span class="muted">${N.ageAdv.left}d</span></div><div class="prog"><i style="width:${pct(1 - N.ageAdv.left / N.ageAdv.total)}"></i></div>`;
     else { const chk = sim.canAdvance(P); h += `<div style="margin-top:10px">${btnCost(chk, `Advance to the ${nxt.name}`, 'data-advance="1" class="btn go"')}</div>${why(chk)}`; }
   } else h += '<div class="sub" style="margin-top:8px">The final age. Reach for the stars: research Interstellar Travel and build the Colony Ship.</div>';
-  h += '</div>';
+  if (!s.modern) h += '</div>';
   const cur = R.cur && TECH[R.cur];
   const cost = cur ? sim.techCostFor(N, R.cur) : 0;
   h += `<div class="card"><div class="kicker">Current research</div><div class="big" style="font-size:18px">${cur ? cur.name : 'Nothing'}</div><div class="sub">${cur ? esc(cur.desc) : 'Choose a technology below or open the tree.'}</div>
@@ -600,13 +606,50 @@ function renderAges(host) {
     <div style="display:flex;gap:6px;margin-top:10px"><button class="btn go" id="opentree">Open the tree of knowledge</button></div></div>`;
   if (R.queue.length) h += `<div class="sec"><div class="sec-title">Queue</div>${R.queue.map((id, k) => `<div class="row"><span>${k + 1}. ${TECH[id].name}</span><button class="btn sm" data-unq="${id}">Remove</button></div>`).join('')}</div>`;
   const av = TECHS.filter(t => canResearch(N, t.id)).sort((a, b) => a.cost - b.cost);
-  h += `<div class="sec"><div class="sec-title">Can be studied now</div>${av.map(t => `<div class="row"><span><span class="hi">${t.name}</span> <span class="small muted">${BRANCHES.find(b => b.id === t.branch).name} · ${fmt(sim.techCostFor(N, t.id))}</span><br><span class="small muted">${esc(t.desc)} ${unlockText(t.id)}</span></span><span style="display:flex;gap:4px;flex-direction:column"><button class="btn sm go" data-res="${t.id}">Study</button><button class="btn sm" data-q="${t.id}">Queue</button></span></div>`).join('') || `<div class="muted small">${nxt ? `Every ${A.name} technology you can reach is known. Advance to the ${nxt.name}.` : 'All knowledge is yours.'}</div>`}</div>`;
+  h += `<div class="sec"><div class="sec-title">Can be studied now</div>${av.map(t => `<div class="row"><span><span class="hi">${t.name}</span> <span class="small muted">${(s.modern && MODERN_BRANCH[t.branch]) || BRANCHES.find(b => b.id === t.branch).name}${t.tier ? ` · tier ${t.tier}` : ''} · ${fmt(sim.techCostFor(N, t.id))}</span><br><span class="small muted">${esc(t.desc)} ${unlockText(t.id)}</span></span><span style="display:flex;gap:4px;flex-direction:column"><button class="btn sm go" data-res="${t.id}">Study</button><button class="btn sm" data-q="${t.id}">Queue</button></span></div>`).join('') || `<div class="muted small">${nxt ? `Every ${A.name} technology you can reach is known. Advance to the ${nxt.name}.` : 'All knowledge is yours.'}</div>`}</div>`;
   if (!setHTML(host, h)) return;
   $('#opentree').onclick = () => openTree();
   host.querySelector('[data-advance]')?.addEventListener('click', () => { const r = sim.advance(P); if (!r.ok) toast('Ages', r.why, 'warn'); else toast('Ages', `Your people begin the passage into the ${nxt.name}.`, 'good'); renderPanel(true); });
   for (const b of host.querySelectorAll('[data-res]')) b.onclick = () => { if (R.cur && R.cur !== b.dataset.res) R.queue.unshift(R.cur); R.cur = b.dataset.res; R.queue = R.queue.filter(x => x !== R.cur); renderPanel(true); };
   for (const b of host.querySelectorAll('[data-q]')) b.onclick = () => { queueTech(N, b.dataset.q); renderPanel(true); };
   for (const b of host.querySelectorAll('[data-unq]')) b.onclick = () => { R.queue = R.queue.filter(x => x !== b.dataset.unq); renderPanel(true); };
+}
+// the head of government: leader, the polls, the next election and the national budget
+function leadershipHTML(sim, N) {
+  const g = N.gov, GT = GOV_TYPES[g.type], hist = g.hist || [];
+  const left = g.nextElection ? Math.max(0, Math.ceil((g.nextElection - sim.s.t) / 24)) : null;
+  const win = Math.max(0.02, Math.min(0.98, (g.approval - 0.48) / 0.16 + 0.5));
+  const spark = hist.length > 1 ? (() => { const w = 220, h = 40, pts = hist.slice(-120); const xs = (k) => (k / (pts.length - 1) * w).toFixed(1), ys = v => (h - v / 100 * h).toFixed(1); return `<svg viewBox="0 0 ${w} ${h}" class="spark"><line x1="0" x2="${w}" y1="${ys(50)}" y2="${ys(50)}" stroke="rgba(255,255,255,.15)" stroke-dasharray="3 3"/><polyline fill="none" stroke="var(--teal)" stroke-width="1.6" points="${pts.map((v, k) => xs(k) + ',' + ys(v)).join(' ')}"/></svg>`; })() : '';
+  const B = N.budget || BUDGET_BASE;
+  return `<div class="sec"><div class="sec-title">Head of government</div>
+    <div class="grid2"><span>${esc(GT.ruler)}</span><span><b>${esc(g.leaderName || 'You')}</b></span>
+    ${GT.democratic ? `<span>Next election</span><span>${left !== null ? `in ${left} days` : '—'}</span><span>Re-election chances</span><span class="${win > 0.55 ? 'pos' : win < 0.45 ? 'neg' : ''}">${pct(win)}</span>` : '<span>Mandate</span><span class="muted">no elections: watch stability and the generals</span>'}
+    ${s_hostile(sim, g) ? '<span>Legislature</span><span class="neg">hostile</span>' : ''}</div>
+    ${spark ? `<div class="small muted" style="margin-top:6px">Approval, last ${Math.min(120, hist.length)} days</div>${spark}` : ''}</div>
+    <div class="sec"><div class="sec-title">National budget</div><div class="small muted" style="margin-bottom:6px">How discretionary spending is split. Moving one slider rebalances the others.</div>
+    ${Object.entries(BUDGET).map(([k, b]) => `<div class="bud-row" title="${esc(b.desc)}"><span>${esc(b.name)}</span><input type="range" min="5" max="60" step="1" value="${Math.round((B[k] || 0) * 100)}" data-bud="${k}"><span class="bud-v">${Math.round((B[k] || 0) * 100)}%</span></div>`).join('')}
+    <div class="small muted">${Object.values(BUDGET).map(b => `${b.name}: ${b.desc}`).join(' ')}</div></div>`;
+}
+const s_hostile = (sim, g) => sim.s.t < (g.hostileUntil || 0);
+function bindBudget(host, sim, N) {
+  for (const inp of host.querySelectorAll('[data-bud]')) inp.oninput = () => {
+    const B = N.budget ||= { ...BUDGET_BASE }, k = inp.dataset.bud, v = +inp.value / 100;
+    const others = Object.keys(B).filter(x => x !== k), rest = others.reduce((a, x) => a + B[x], 0) || 1;
+    B[k] = v; for (const x of others) B[x] = Math.max(0.03, B[x] / rest * (1 - v));
+    const tot = Object.values(B).reduce((a, x) => a + x, 0); for (const x in B) B[x] /= tot;
+    for (const el of host.querySelectorAll('[data-bud]')) { el.value = Math.round(B[el.dataset.bud] * 100); el.nextElementSibling.textContent = Math.round(B[el.dataset.bud] * 100) + '%'; }
+  };
+  for (const inp of host.querySelectorAll('[data-bud]')) inp.onchange = () => { computeMods(sim.s, N); pactMods(sim, N); budgetMods(N); sim.recalcNation(N.code); toast('Budget', 'The new budget passes.', 'good'); };
+}
+// research & development in the modern world: output, spending and how far along each tier the nation is
+function modernRnD(sim, N) {
+  const mod = TECHS.filter(x => x.age === 9 && x.tier);
+  const NAME = ['', 'Fielded in 2025', 'Near future', 'Next decade', 'Frontier', 'Breakthroughs'];
+  const world = Object.values(sim.s.nations).filter(n => n.alive).sort((a, b) => (b.st.rp || 0) - (a.st.rp || 0));
+  const rank = world.findIndex(n => n.code === N.code) + 1;
+  return `<div class="card"><div class="kicker">${dstr()} · research & development</div><div class="big">${fmt(N.st.rp)} <span class="small muted">research per day</span></div>
+    <div class="sub">World rank #${rank} in research output. Spending: ${fmt(N.st.researchSpend || 0)} wealth/day.</div>
+    ${[1, 2, 3, 4, 5].map(k => { const L = mod.filter(x => x.tier === k), have = L.filter(x => N.techs[x.id]).length; return `<div class="grid2" style="margin-top:6px"><span>Tier ${k} · ${NAME[k]}</span><span>${have} / ${L.length}</span></div><div class="meter"><i style="width:${pct(have / L.length)}"></i></div>`; }).join('')}</div>`;
 }
 // what a technology unlocks, as a short string
 export function unlockText(id) {

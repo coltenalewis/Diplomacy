@@ -16,6 +16,7 @@ export function adminCap(sim, N) {
   c += ADMIN_GOV[N.gov?.type] ?? 1;
   c += Math.min(14, Object.keys(N.governors || {}).length * 0.7);
   if (N.formed) c += 4;
+  if (N.homeTiles) c += N.homeTiles; // a modern state's own territory is home, not an overstretched empire
   if (N.code !== sim.s.player) c *= 1 + Math.max(0, sim.s.difficulty || 0) * 0.3; // rival rulers on higher difficulty run tighter states
   return Math.round(c);
 }
@@ -103,9 +104,17 @@ function coalitions(sim) {
     if (!C) {
       if (cands.length < 2) continue;
       C = { id: (s.coid = (s.coid || 0) + 1), target: X.code, members: cands.slice(0, 8), since: s.t };
+      if (s.modern) { // the modern answer to aggression: sanctions, not armies
+        for (const m of C.members) if (!s.sanctions.some(z => z.by === m && z.on === X.code)) s.sanctions.push({ by: m, on: X.code });
+        s.trades = s.trades.filter(t => !(C.members.includes(t.from) && t.to === X.code) && !(C.members.includes(t.to) && t.from === X.code));
+        s.coalitions.push(C);
+        sim.emit('treaty', `${C.members.map(m => sim.nm(m)).join(', ')} impose coordinated sanctions on ${sim.nm(X.code)} over its aggression.`, [X.code, ...C.members], { loc: X.capital, major: true });
+        continue;
+      }
       s.coalitions.push(C);
       sim.emit('war', `A coalition forms against the ${sim.nm(X.code)}: ${C.members.map(m => 'the ' + sim.nm(m)).join(', ')} pledge to stand together against their aggression.`, [X.code, ...C.members], { loc: X.capital, major: true });
-    } else for (const m of cands) if (!C.members.includes(m) && C.members.length < 10) { C.members.push(m); if (X.code === s.player) sim.emit('war', `The ${sim.nm(m)} join the coalition against you.`, [X.code, m], { loc: s.nations[m].capital }); }
+    } else if (s.modern) { for (const m of cands) if (!C.members.includes(m) && C.members.length < 14) { C.members.push(m); if (!s.sanctions.some(z => z.by === m && z.on === X.code)) s.sanctions.push({ by: m, on: X.code }); } continue; }
+    else for (const m of cands) if (!C.members.includes(m) && C.members.length < 10) { C.members.push(m); if (X.code === s.player) sim.emit('war', `The ${sim.nm(m)} join the coalition against you.`, [X.code, m], { loc: s.nations[m].capital }); }
     // members stand by each other
     for (const a of C.members) for (const b of C.members) if (a < b && !sim.atWar(a, b) && sim.rel(a, b) !== 'alliance') sim.setRel(a, b, 'alliance');
     // and strike when strong enough

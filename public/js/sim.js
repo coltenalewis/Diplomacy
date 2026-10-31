@@ -2,7 +2,7 @@
 // The world starts as unclaimed wilderness with native peoples. Civilizations claim tiles, work their resources,
 // grow settlements, research through ten ages, and fight with units that have physical positions.
 import { cold, harvest } from './seasons.js';
-import { AGES, NAGES, ageScale, YEARS_PER_DAY } from './eras.js';
+import { AGES, NAGES, ageScale, YEARS_PER_DAY, setEconomyScale } from './eras.js';
 import { TERRAIN, RES, IMPROVEMENTS, IMP_ORDER, IMP_CAP, LABOR, STRATEGIC, LUXURIES, classify, generateDeposits, rng, known } from './resources.js';
 import { pressureDaily, onAcquire, addInfamy } from './pressure.js';
 import { crisesDaily, applyScenario } from './crises.js';
@@ -14,6 +14,7 @@ import { initGovernment, computeMods, unitMods, politicsDaily, rollEvent, refres
 import { FORMABLES, modernFormables, formProgress } from './formables.js';
 import { cultureOf, civName, civColor } from './names.js';
 import { slerpLL } from './world.js';
+import { setupModern, modernFaiths, START_YEAR, fixArticles, worldMarket, MODERN_ECON, budgetMods } from './modern.js';
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const rnd = (a, b) => a + Math.random() * (b - a);
@@ -34,10 +35,11 @@ export class Sim {
     this.w = world; this.geo = geo;
     this.listeners = []; this.unitById = new Map(); this.shots = []; this.battles = [];
     this.buildStatic();
-    if (opts.state) { this.s = opts.state; this.migrate(); this.rebuildCaches(); initSociety(this); initPacts(this); for (const N of Object.values(this.s.nations)) if (N.alive) { computeMods(this.s, N); this.recalcNation(N.code); } return; }
+    if (opts.state) { this.s = opts.state; setEconomyScale(this.s.modern ? MODERN_ECON : 1); this.migrate(); this.rebuildCaches(); initSociety(this); modernFaiths(this); initPacts(this); for (const N of Object.values(this.s.nations)) if (N.alive) { computeMods(this.s, N); this.recalcNation(N.code); } return; }
     this.s = this.initState(opts);
     this.rebuildCaches();
     initSociety(this);
+    modernFaiths(this);
     initPacts(this);
     for (const N of Object.values(this.s.nations)) { computeMods(this.s, N); this.recalcNation(N.code); }
   }
@@ -96,6 +98,15 @@ export class Sim {
       maxCivs: Math.max(opts.maxCivs || 200, clamp(opts.civs || 16, 2, 200)), emergence: opts.emergence ?? true, nextEmerge: 24 * 30,
     };
     this.s = s;
+    // the present day: the real countries of 2025 (modern.js)
+    if (!opts.legacy) {
+      setEconomyScale(MODERN_ECON);
+      setupModern(this, opts);
+      this.rebuildCaches();
+      for (const N of Object.values(s.nations)) { computeMods(s, N); this.recalcNation(N.code); }
+      refreshCandidates(s, s.nations[s.player]);
+      return s;
+    }
     // place civilizations: the player's chosen tile first, then random habitable tiles spaced apart
     const nCiv = clamp(opts.civs || 16, 2, 200);
     const starts = [];
@@ -260,6 +271,7 @@ export class Sim {
   // ---------------------------------------------------------------- helpers
   on(fn) { this.listeners.push(fn); }
   emit(kind, text, nations = [], extra = {}) {
+    if (this.s.modern) text = fixArticles(this, text);
     const e = { t: this.s.t, y: this.s.year, kind, text, nations, ...extra };
     this.s.events.push(e); if (this.s.events.length > 500) this.s.events.shift();
     for (const f of this.listeners) f(e);
@@ -941,7 +953,7 @@ export class Sim {
     }
     // technology multipliers
     const mech = 1 + 0.3 * a; // saws, cranes and machines multiply what each worker cuts and quarries
-    o.food *= (1 + m.food) * (1 + 0.2 * Math.max(0, a - 5)) * ok * harvest(this.w.regions[r.i].lat, this.s.t); o.wood *= (1 + m.wood) * mech * ok; o.stone *= (1 + m.stone) * mech * ok; o.metal *= (1 + m.metal) * ok;
+    o.food *= (1 + m.food) * (1 + 0.2 * Math.max(0, a - 5)) * ok * harvest(this.w.regions[r.i].lat, this.s.t) * (N.agri || 1); o.wood *= (1 + m.wood) * mech * ok; o.stone *= (1 + m.stone) * mech * ok; o.metal *= (1 + m.metal) * ok;
     o.wealth *= (1 + m.wealth) * ok; o.oil *= (1 + m.oil) * ok; o.rp *= ok; o.energy *= (1 + m.energy) * ok;
     o.labor = lr; o.levels = levels;
     return o;
@@ -975,6 +987,16 @@ export class Sim {
       for (const k in y) y[k] += o[k];
       pop += r.pop; tiles++; unrestW += r.unrest * r.pop;
     }
+    // the modern world's calibration: national power grids and oil fields (modern.js)
+    if (N.power) y.energy *= N.power;
+    if (N.powerAdd) y.energy += N.powerAdd;
+    if (N.oilBase) y.oil += N.oilBase;
+    // output in proportion to the real economy; new works raise it with diminishing returns (doubling the raw
+    // output adds about a quarter), so economies grow over years rather than weeks
+    const rawY = { wealth: y.wealth, metal: y.metal, wood: y.wood, stone: y.stone, rp: y.rp };
+    if (N.econ0) for (const k in N.econ0) { const E = N.econ0[k]; y[k] = E.want * Math.pow(Math.max(1e-6, y[k]) / E.raw, 0.32); }
+    else if (N.econ) for (const k in N.econ) y[k] *= N.econ[k];
+    if (N.aid) y.wealth += N.aid; // foreign aid received
     // tin alloys copper into bronze
     if (N.access.tin && N.access.copper) y.metal *= 1.25;
     if (N.access.phosphate && N.age >= 6) y.food *= 1.1; // fertilizer
@@ -982,7 +1004,7 @@ export class Sim {
     if (N.access.clay) y.stone *= 1.06; // fired brick
     let upkeep = { wealth: 0, food: 0, oil: 0 }, units = 0, training = 0;
     for (const u of s.units) if (u.nation === c) { const U = UNITS[u.type].upkeep; upkeep.wealth += U.wealth; upkeep.food += U.food; upkeep.oil += U.oil || 0; units++; if (u.train) training += U.wealth * 0.5; }
-    upkeep.wealth *= 1 + m.upkeep;
+    upkeep.wealth *= (1 + m.upkeep) * (s.modern ? 0.16 : 1);
     const trade = { food: 0, wood: 0, stone: 0, metal: 0, oil: 0, wealth: 0 };
     for (const t of s.trades) {
       if (t.blockaded) continue;
@@ -993,11 +1015,11 @@ export class Sim {
     const eF = N.age >= 6 && y.eCons > 0 ? clamp((y.energy + 1) / (y.eCons * (1 + m.energyCons)), 0.2, 1) : 1;
     const wealthIn = y.wealth * (0.4 + 0.6 * eF) * this.sanctionMult(c);
     // rulers with idle treasuries endow scholars
-    const endow = N.ai && N.wealth > Math.max(50, wealthIn * 120) ? N.wealth * 0.01 : 0;
+    const endow = N.ai && !s.modern && N.wealth > Math.max(50, wealthIn * 120) ? N.wealth * 0.01 : 0;
     const researchSpend = N.ai && N.saving ? 0 : Math.max(0, wealthIn) * m.researchShare + endow;
     const rp = (y.rp + researchSpend * 1.6) * (1 + m.research) * (0.5 + 0.5 * eF);
     const foodCons = pop * FOOD_PER_K + upkeep.food;
-    N.st = { pop, tiles, units, unrestW: pop ? unrestW / pop : 0, eF, rp, researchSpend, training, upkeep,
+    N.st = { pop, tiles, units, unrestW: pop ? unrestW / pop : 0, eF, rp, researchSpend, training, upkeep, raw: rawY,
       prod: { food: y.food, wood: y.wood, stone: y.stone, metal: y.metal * (0.5 + 0.5 * eF), wealth: wealthIn, oil: y.oil }, energy: y.energy, eCons: y.eCons, foodCons, trade,
       net: { food: y.food + trade.food - foodCons, wood: y.wood + trade.wood, stone: y.stone + trade.stone, metal: y.metal * (0.5 + 0.5 * eF) + trade.metal, wealth: wealthIn - upkeep.wealth - researchSpend - training + trade.wealth, oil: y.oil + trade.oil - upkeep.oil },
       income: wealthIn };
@@ -1016,12 +1038,15 @@ export class Sim {
       if (!N.alive) continue;
       computeMods(s, N);
       pactMods(this, N);
+      budgetMods(N);
+      if (s.modern && N.code === s.player) { const h = (N.gov.hist ||= []); h.push(Math.round(N.gov.approval * 100)); if (h.length > 365) h.shift(); }
       const st = this.recalcNation(N.code);
       const m = N.mods;
       for (const k of STOCKS) {
         N[k] = (N[k] || 0) + st.net[k];
         if (k !== 'wealth' && k !== 'food') N[k] = clamp(N[k], 0, this.storageCap(N, k));
       }
+      if (s.modern) worldMarket(this, N);
       if (N.food < 0) { N.famine = clamp(-N.food / Math.max(0.1, st.foodCons), 0, 1); N.food = 0; } else N.famine = 0;
       N.food = Math.min(N.food, this.storageCap(N, 'food') * (1 + 0.3 * this.regionsOf(N.code).reduce((a, r) => a + (r.bld.granary || 0), 0) / Math.max(1, st.tiles)));
       if (N.oil < 0) N.oil = 0;
@@ -1031,7 +1056,8 @@ export class Sim {
       for (const i of this.owned.get(N.code) || []) {
         const r = s.regions[i];
         const cap = this.housing(r, N);
-        if (N.famine) r.pop *= 1 - 0.01 * N.famine;
+        if (s.modern) { r.pop = Math.min(cap * 1.02, r.pop * (1 + (N.famine ? -0.004 * N.famine : (N.growth ?? 0.005) / 365))); } // modern demography: slow, by the country's real rate
+        else if (N.famine) r.pop *= 1 - 0.01 * N.famine;
         else if (growing && r.pop < cap) r.pop += r.pop * 0.012 * (1 + m.popGrowth + 0.15 * (r.bld.granary || 0)) * (1 - r.pop / cap) + 0.01;
         else if (r.pop > cap) r.pop -= (r.pop - cap) * 0.02;
         r.damage = Math.max(0, r.damage - 0.002);
@@ -1088,7 +1114,7 @@ export class Sim {
     // player narrative events
     const P = s.nations[s.player];
     if (P.alive && !s.pendingEvent && s.t >= s.nextEventAt) {
-      s.nextEventAt = s.t + Math.round(rnd(16, 34)) * 24;
+      s.nextEventAt = s.t + Math.round(s.modern ? rnd(7, 14) : rnd(16, 34)) * 24;
       const ev = rollEvent(this, P);
       if (ev) { s.pendingEvent = ev; for (const f of this.listeners) f({ kind: 'rp', ev }); }
     }
@@ -1100,6 +1126,7 @@ export class Sim {
   }
   calendar() {
     const s = this.s;
+    if (s.modern) { s.year = START_YEAR + s.t / 24 / 365; return; } // one day is a day
     let L = 0, lead = null;
     for (const N of Object.values(s.nations)) if (N.alive && N.age >= L) { if (N.age > L || !lead || ageProgress(N) > ageProgress(lead)) lead = N; L = N.age; }
     if (!lead) return;
@@ -1132,6 +1159,7 @@ export class Sim {
     for (const u of s.units) { const o = s.regions[u.loc]?.owner; if (o && o !== u.nation) add(u.nation, o); }
   }
   formablesDaily() {
+    if (this.s.modern) return; // the real countries already exist
     const s = this.s;
     if (s.t % (24 * 3)) return;
     for (const N of Object.values(s.nations)) {
@@ -1515,6 +1543,7 @@ export class Sim {
     }
   }
   message(from, to, text, proposal = null) {
+    if (this.s.modern) text = fixArticles(this, text);
     const m = { id: this.s.mid++, t: this.s.t, y: this.s.year, from, to, text, proposal, status: proposal ? 'pending' : null, unread: true };
     this.s.messages.push(m); if (this.s.messages.length > 400) this.s.messages.shift();
     if (to === this.s.player) for (const f of this.listeners) f({ kind: 'message', msg: m });
@@ -1676,6 +1705,11 @@ export class Sim {
   // ---------------------------------------------------------------- scoring & victory
   score(c) {
     const N = this.s.nations[c]; if (!N?.alive) return 0;
+    if (this.s.modern) { // national power: economy, armed forces, frontier research, people, the bomb, a veto
+      const frontier = Object.keys(N.techs).filter(id => TECH[id]?.age >= 9).length;
+      const veto = (this.s.pacts || []).some(P => P.veto?.includes(c)) ? 150 : 0;
+      return Math.round((N.st.prod?.wealth || 0) * 4 + this.power(c) * 1.2 + frontier * 25 + Math.sqrt(N.st.pop || 0) * 0.8 + Math.sqrt(N.warheads || 0) * 15 + veto);
+    }
     return Math.round(Object.keys(N.techs).length * 10 + (N.st.pop || 0) ** 0.5 * 3 + (this.owned.get(c)?.size || 0) * 8 + Object.values(this.s.wonders).filter(x => x === c).length * 60 + N.age * 40);
   }
   snapshot() {
@@ -1701,10 +1735,12 @@ export class Sim {
 }
 
 // AI / science-minister tech choice
+const BOMB = ['nuclear_weapons', 'thermonuclear', 'icbm'];
 export function pickTech(N, focus) {
-  const av = available(N);
+  // states without the bomb do not reach for it, unless they are among the would-be proliferators
+  const av = available(N).filter(x => !(N.age >= 9 && N.ai && BOMB.includes(x.id) && !N.techs.nuclear_weapons && !N.proliferator));
   if (!av.length) return null;
-  const pref = { military: ['war', 'sea'], economy: ['food', 'craft', 'econ'], science: ['lore'], civic: ['civic'], balanced: null }[focus || 'balanced'];
+  const pref = { military: ['war', 'sea', 'intel'], economy: ['food', 'craft', 'econ'], science: ['lore'], civic: ['civic'], balanced: null }[focus || 'balanced'];
   const sci = N.traits?.science ?? 0.5;
   const score = x => x.cost * (pref && !pref.includes(x.branch) ? 2.5 : 1) * (x.branch === 'lore' ? 1.1 - sci * 0.3 : 1) * (0.75 + Math.random() * 0.5);
   return av.sort((a, b) => score(a) - score(b))[0].id;

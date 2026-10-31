@@ -10,12 +10,15 @@ export const AGES = [
   { key: 'industrial', name: 'Industrial Age', short: 'Industrial', from: 1750, to: 1900, color: '#c97a4a', blurb: 'Steam, coal, railways and factories. Nations become machines.' },
   { key: 'modern', name: 'Modern Age', short: 'Modern', from: 1900, to: 1945, color: '#7f9a5a', blurb: 'Electricity, oil, tanks and aircraft. Total war.' },
   { key: 'atomic', name: 'Atomic Age', short: 'Atomic', from: 1945, to: 1990, color: '#e0c33a', blurb: 'The bomb, jets, rockets and the race to space.' },
-  { key: 'information', name: 'Information Age', short: 'Information', from: 1990, to: 2100, color: '#57d2ff', blurb: 'Computers, networks, artificial intelligence and the stars.' },
+  { key: 'information', name: 'Modern Era', short: 'Modern', from: 1990, to: 2100, color: '#57d2ff', blurb: 'The world of 2025 and the decades ahead: networks, AI, drones and the race for space.' },
 ];
 export const NAGES = AGES.length;
 
-// economic scale of an age: unit and building costs, yields and upkeep grow with it
-export const ageScale = a => Math.pow(1.75, a);
+// economic scale of an age: unit and building costs, yields and upkeep grow with it. The modern world runs on a
+// GDP-calibrated economy, so its prices and thresholds are scaled down to match (setEconomyScale).
+let ECON = 1;
+export function setEconomyScale(k) { ECON = k; }
+export const ageScale = a => Math.pow(1.75, a) * (a >= 9 ? ECON : 1);
 // research cost of a technology in an age
 export const techCost = a => Math.round((a === 0 ? 10 : 14) * Math.pow(2.5, a));
 
@@ -26,6 +29,7 @@ export function yearStr(y) {
 }
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 export function dateStr(y, age = 0) {
+  if (y >= 1990) { const d = new Date(Date.UTC(Math.floor(y), 0, 1) + (y % 1) * 365 * 864e5); return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`; }
   if (y < 1500 || age < 6) return yearStr(y);
   const m = Math.floor(((y % 1) + 1) % 1 * 12);
   return `${MONTHS[m]} ${Math.floor(y)}`;
