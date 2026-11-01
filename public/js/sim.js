@@ -15,6 +15,11 @@ import { FORMABLES, modernFormables, formProgress } from './formables.js';
 import { cultureOf, civName, civColor } from './names.js';
 import { slerpLL } from './world.js';
 import { setupModern, modernFaiths, START_YEAR, fixArticles, worldMarket, MODERN_ECON, budgetMods } from './modern.js';
+import { setupWW2, ww2Daily, WW2_ECON, WW2_ECON_FROM, WW2_DOY } from './ww2.js';
+import { ww2Timeline } from './ww2-events.js';
+import { setTechScenario, techScenario } from './tech.js';
+import { setSeasonStart } from './seasons.js';
+import { setDailyCalendar } from './eras.js';
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const rnd = (a, b) => a + Math.random() * (b - a);
@@ -28,6 +33,14 @@ export const GOODS = ['food', 'wood', 'stone', 'metal', 'oil'];
 const BASE_PRICE = { food: 0.5, wood: 0.6, stone: 0.6, metal: 1.3, oil: 2.2 };
 // reference attack of an age's line infantry: garrisons and siege power are measured in these
 const refAtk = a => UNITS['INF' + clamp(a, 0, 9)].atk;
+// the scenario's economy scale, technology tree, calendar and seasons (the 2025 world, or 1 September 1939)
+function useScenario(s) {
+  const w2 = !!s.ww2;
+  setEconomyScale(w2 ? WW2_ECON : s.modern ? MODERN_ECON : 1, w2 ? WW2_ECON_FROM : 9);
+  setTechScenario(w2 ? 'ww2' : null);
+  setSeasonStart(w2 ? WW2_DOY : 0);
+  setDailyCalendar(w2 ? 1930 : 1990);
+}
 const scaleCost = (cost, k) => { const o = {}; for (const [r, v] of Object.entries(cost)) o[r] = Math.round(v * k * 10) / 10; return o; };
 
 export class Sim {
@@ -35,7 +48,7 @@ export class Sim {
     this.w = world; this.geo = geo;
     this.listeners = []; this.unitById = new Map(); this.shots = []; this.battles = [];
     this.buildStatic();
-    if (opts.state) { this.s = opts.state; setEconomyScale(this.s.modern ? MODERN_ECON : 1); this.migrate(); this.rebuildCaches(); initSociety(this); modernFaiths(this); initPacts(this); for (const N of Object.values(this.s.nations)) if (N.alive) { computeMods(this.s, N); this.recalcNation(N.code); } return; }
+    if (opts.state) { this.s = opts.state; useScenario(this.s); this.migrate(); this.rebuildCaches(); initSociety(this); modernFaiths(this); initPacts(this); for (const N of Object.values(this.s.nations)) if (N.alive) { computeMods(this.s, N); this.recalcNation(N.code); } return; }
     this.s = this.initState(opts);
     this.rebuildCaches();
     initSociety(this);
@@ -100,8 +113,8 @@ export class Sim {
     this.s = s;
     // the present day: the real countries of 2025 (modern.js)
     if (!opts.legacy) {
-      setEconomyScale(MODERN_ECON);
-      setupModern(this, opts);
+      s.ww2 = opts.scenario === 'ww2' ? {} : null; useScenario(s);
+      if (opts.scenario === 'ww2') setupWW2(this, opts); else setupModern(this, opts);
       this.rebuildCaches();
       for (const N of Object.values(s.nations)) { computeMods(s, N); this.recalcNation(N.code); }
       refreshCandidates(s, s.nations[s.player]);
@@ -546,6 +559,7 @@ export class Sim {
         }
         if (T.role === 'sub' && !(eSea || eEmb)) continue;
         if (T.role === 'warship' && !eSea && !eEmb && !(eAir && T.aa) && T.range < 80) continue;
+        if (s.ww2 && T.domain === 'sea' && ET.domain === 'land' && !eEmb && !this.T[e.loc]?.coastal) continue; // naval guns reach the coast, not the interior
         if (T.role === 'transport') continue;
         if (u.air && u.air.phase !== 'engage' && !eAir) continue;
         if (T.role === 'bomber' && eAir) continue;
@@ -567,6 +581,8 @@ export class Sim {
       let A = T.atk * um.atk * (T.antisub && TT.role === 'sub' ? 3 : 1) * (T.antiArmor && TT.armor ? 2 : 1) * (1 + (s.nations[u.nation].bonusAtk || 0));
       if (T.role === 'fighter' && !(t.air && t.air.phase !== 'base')) A *= 0.55;
       if (T.domain === 'land' && TT.domain === 'air') A *= T.aa ? 1.2 : 0.4;
+      if (s.ww2 && T.domain === 'air' && TT.domain === 'land') A *= 0.6;
+      if (s.ww2 && T.domain === 'sea' && TT.domain === 'land') A *= 0.4; // 1940s bombs miss far more than they hit
       if (T.role === 'mounted' && !T.armor && TT.role === 'melee' && TT.age >= 1 && TT.age <= 5) A *= 0.75; // spears and pikes blunt cavalry
       const tr = s.regions[t.loc];
       let D = TT.def * tm.def;
@@ -576,7 +592,7 @@ export class Sim {
       }
       if (TT.domain === 'land' && w.regions[t.loc].sea) D = Math.min(D, 1);
       const hpf = 0.5 + 0.5 * u.hp / u.mhp;
-      hit(t, 2.2 * A * (A / (A + D)) * hpf * rnd(0.7, 1.3));
+      hit(t, 2.2 * A * (A / (A + D)) * hpf * rnd(0.7, 1.3) * (s.ww2 ? 0.3 : 1)); // the 1939 war is fought day by day: divisions grind on for days, not hours
       u.fighting = 3; t.fighting = 3;
       u.xp = Math.min(100, (u.xp || 0) + 0.06);
       if (this.shots.length < 600) {
@@ -589,9 +605,11 @@ export class Sim {
     this.battles = [...battleAt].map(([loc, ns]) => ({ loc, nations: [...ns], pos: this.anchor(loc) }));
     if (!any) return;
     const lost = [];
-    for (const [u, d] of dmg) {
+    const cap = s.ww2 ? 0.02 : Infinity; // a division under fire for an hour is battered, not annihilated
+    for (const [u, d0] of dmg) {
+      const d = Math.min(d0, u.mhp * cap);
       u.hp -= d;
-      const N = s.nations[u.nation]; if (N) N.exhaustion = clamp(N.exhaustion + d / (UNITS[u.type].hp * 60) * (1 + (N.mods?.exhaustion || 0)), 0, 1);
+      const N = s.nations[u.nation]; if (N) N.exhaustion = clamp(N.exhaustion + d / (UNITS[u.type].hp * 60) * (1 + (N.mods?.exhaustion || 0)) * (s.ww2 ? 0.25 : 1), 0, 1);
       if (u.hp <= 0) lost.push(u);
     }
     for (const u of lost) {
@@ -1004,7 +1022,7 @@ export class Sim {
     if (N.access.clay) y.stone *= 1.06; // fired brick
     let upkeep = { wealth: 0, food: 0, oil: 0 }, units = 0, training = 0;
     for (const u of s.units) if (u.nation === c) { const U = UNITS[u.type].upkeep; upkeep.wealth += U.wealth; upkeep.food += U.food; upkeep.oil += U.oil || 0; units++; if (u.train) training += U.wealth * 0.5; }
-    upkeep.wealth *= (1 + m.upkeep) * (s.modern ? 0.16 : 1);
+    upkeep.wealth *= (1 + m.upkeep) * (s.ww2 ? 0.35 : s.modern ? 0.16 : 1);
     const trade = { food: 0, wood: 0, stone: 0, metal: 0, oil: 0, wealth: 0 };
     for (const t of s.trades) {
       if (t.blockaded) continue;
@@ -1120,13 +1138,14 @@ export class Sim {
     }
     if (P.alive && (!P.gov.candidatesAt || s.t - P.gov.candidatesAt > 24 * 60)) refreshCandidates(s, P);
     this.tributeDaily();
+    if (s.ww2) { ww2Timeline(this); ww2Daily(this); }
     this.updatePrices();
     if (s.t % (24 * 7) === 0) this.snapshot();
     this.checkVictory();
   }
   calendar() {
     const s = this.s;
-    if (s.modern) { s.year = START_YEAR + s.t / 24 / 365; return; } // one day is a day
+    if (s.modern) { s.year = (s.startYear ?? START_YEAR) + s.t / 24 / 365; return; } // one day is a day
     let L = 0, lead = null;
     for (const N of Object.values(s.nations)) if (N.alive && N.age >= L) { if (N.age > L || !lead || ageProgress(N) > ageProgress(lead)) lead = N; L = N.age; }
     if (!lead) return;
@@ -1664,6 +1683,7 @@ export class Sim {
     const target = this.anchor(i);
     this.shots.push({ a: chk.from, b: target, k: chk.icbm ? 'icbm' : 'nukebomb', n: by });
     s.nukedBy ||= {}; s.nukedBy[victim] = true;
+    if (s.ww2) { s.ww2.bombed ||= {}; s.ww2.bombed[victim] = (s.ww2.bombed[victim] || 0) + 1; }
     for (const c of Object.keys(s.nations)) if (c !== by) this.addOpinion(c, by, this.friendly(c, by) ? -30 : -60);
     const ic = (V.mods.intercept || 0) * (1 - (A.mods.pierce || 0));
     if (Math.random() < ic) {
@@ -1706,7 +1726,7 @@ export class Sim {
   score(c) {
     const N = this.s.nations[c]; if (!N?.alive) return 0;
     if (this.s.modern) { // national power: economy, armed forces, frontier research, people, the bomb, a veto
-      const frontier = Object.keys(N.techs).filter(id => TECH[id]?.age >= 9).length;
+      const frontier = Object.keys(N.techs).filter(id => (this.s.ww2 ? TECH[id]?.ww2 : TECH[id]?.age >= 9)).length;
       const veto = (this.s.pacts || []).some(P => P.veto?.includes(c)) ? 150 : 0;
       return Math.round((N.st.prod?.wealth || 0) * 4 + this.power(c) * 1.2 + frontier * 25 + Math.sqrt(N.st.pop || 0) * 0.8 + Math.sqrt(N.warheads || 0) * 15 + veto);
     }
@@ -1721,7 +1741,7 @@ export class Sim {
   // vassal lands count half toward dominion
   landShare(c) { let n = this.owned.get(c)?.size || 0; for (const v of this.vassalsOf(c)) n += (this.owned.get(v)?.size || 0) * 0.5; return n / this.landIdx.length; }
   checkVictory() {
-    const s = this.s; if (s.over) return;
+    const s = this.s; if (s.over || s.ww2) return; // the 1939 war ends its own way (ww2.js)
     const P = s.nations[s.player];
     if (!P.alive) { s.over = true; s.winner = null; s.winType = 'defeat'; this.emit('war', 'Your civilization has fallen.', [s.player], { major: true }); return; }
     const alive = Object.values(s.nations).filter(n => n.alive);
@@ -1738,7 +1758,7 @@ export class Sim {
 const BOMB = ['nuclear_weapons', 'thermonuclear', 'icbm'];
 export function pickTech(N, focus) {
   // states without the bomb do not reach for it, unless they are among the would-be proliferators
-  const av = available(N).filter(x => !(N.age >= 9 && N.ai && BOMB.includes(x.id) && !N.techs.nuclear_weapons && !N.proliferator));
+  const av = available(N).filter(x => !((N.age >= 9 || techScenario() === 'ww2') && N.ai && BOMB.includes(x.id) && !N.techs.nuclear_weapons && !N.proliferator)); // in 1939 the bomb is a programme of years (ww2-events.js), not a laboratory's project
   if (!av.length) return null;
   const pref = { military: ['war', 'sea', 'intel'], economy: ['food', 'craft', 'econ'], science: ['lore'], civic: ['civic'], balanced: null }[focus || 'balanced'];
   const sci = N.traits?.science ?? 0.5;

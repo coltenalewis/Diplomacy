@@ -336,16 +336,47 @@ m(3, 'econ', 'platform_economy', 'Platform Economy', ['large_language_models', '
 m(3, 'econ', 'sanctions_resilience', 'Sanctions Resilience', ['digital_currency', 'reshoring'], { wealth: 0.04, tradeBonus: 0.05 }, 'Alternative payment rails, barter and shadow fleets.');
 m(4, 'econ', 'automation_dividend', 'Automation Dividend', ['platform_economy', 'military_ai'], { wealth: 0.15, prod: 0.1 }, 'Robots and AI do most of the work: the gains are vast.');
 
+// ---------------------------------------------------------------- the Second World War (1939-1945)
+// ww2: tier of the wartime race (1 the opening years ... 4 the end of the war). Only these, the interwar technologies
+// a nation still lacks, and a handful of Atomic Age breakthroughs (fission, the bomb, jets, rockets) are open in 1939.
+const w2 = (tier, branch, id, name, req, fx, desc) => { t(8, branch, id, name, req, fx, desc); TECHS[TECHS.length - 1].ww2 = tier; };
+w2(1, 'war', 'blitzkrieg', 'Blitzkrieg Doctrine', ['combined_arms', 'radio'], { atkLand: 0.05, speedLand: 0.08 }, 'Tanks, dive bombers and radio: break through and keep going.');
+w2(1, 'war', 'dive_bombing', 'Dive Bombing', ['flight', 'ballistics'], { atkAir: 0.05 }, 'Aircraft that plunge onto their target: close air support for the front.');
+w2(1, 'war', 'airborne_forces', 'Airborne Forces', ['flight', 'combined_arms'], { atk: 0.02 }, 'Paratroopers and gliders seize bridges behind the lines.');
+w2(1, 'sea', 'convoy_system', 'Convoy System', ['dreadnought', 'radio'], { defSea: 0.08 }, 'Merchantmen sail together under escort.');
+w2(1, 'sea', 'sonar', 'ASDIC & Sonar', ['submarine_warfare', 'electronics'], { atkSea: 0.05 }, 'Sound pulses find the submarine below.');
+w2(1, 'craft', 'war_economy', 'Total War Economy', ['mass_production'], { prod: 0.15, approval: -0.02 }, 'Rationing, planning boards and factories that run day and night.');
+w2(1, 'craft', 'synthetic_fuel', 'Synthetic Fuel', ['refining', 'chemistry'], { oil: 0.35 }, 'Petrol from coal: armies that do not depend on the oil fields.');
+w2(1, 'intel', 'codebreaking', 'Codebreaking', ['intelligence_agencies', 'electronics'], { covert: 0.15, atk: 0.02 }, 'Cipher machines broken: the enemy\'s orders read before his generals do.');
+w2(1, 'civic', 'mobilisation', 'Mass Mobilisation', ['propaganda'], { pc: 0.06, stability: 0.002 }, 'The whole nation enlisted: posters, ration books and recruiting offices.');
+w2(2, 'war', 'heavy_tanks', 'Heavy Tanks', ['blitzkrieg', 'mass_production'], { atkLand: 0.04, defLand: 0.03 }, 'Thick armour and long guns.');
+w2(2, 'war', 'strategic_bombing', 'Strategic Bombing', ['flight', 'war_economy'], { atkAir: 0.06 }, 'Four-engined bombers strike the factories, railways and ports behind the front.');
+w2(2, 'war', 'proximity_fuze', 'Proximity Fuze', ['electronics', 'radar'], { defAir: 0.1 }, 'Shells that burst beside the aircraft.');
+w2(2, 'sea', 'carrier_task_forces', 'Carrier Task Forces', ['naval_aviation', 'radar'], { atkSea: 0.06 }, 'Fleets built around the flight deck, not the battleship.');
+w2(2, 'food', 'mass_penicillin', 'Mass-Produced Penicillin', ['antibiotics', 'mass_production'], { popGrowth: 0.1, xp: 0.05 }, 'Wounds that once killed now heal.');
+w2(2, 'lore', 'operations_research', 'Operations Research', ['electronics', 'mathematics'], { research: 0.1, prod: 0.05 }, 'Scientists apply statistics to convoys, bombing and supply.');
+w2(2, 'civic', 'women_in_industry', 'Women in Industry', ['war_economy'], { prod: 0.1, approval: 0.01 }, 'Millions of women take the places of the men at the front.');
+w2(3, 'sea', 'centimetric_radar', 'Centimetric Radar', ['radar', 'proximity_fuze'], { defAir: 0.08, atkSea: 0.04 }, 'The cavity magnetron: radar small enough for every aircraft and escort.');
+w2(3, 'war', 'assault_rifles', 'Assault Rifles', ['mechanization'], { atkLand: 0.04 }, 'Automatic fire for every infantryman.');
+w2(3, 'lore', 'electronic_computing', 'Electronic Computing', ['codebreaking', 'operations_research'], { research: 0.12, covert: 0.05 }, 'Valve machines that break ciphers and compute firing tables.');
+for (const [id, tier] of [['mechanization', 2], ['amphibious_warfare', 2], ['nuclear_fission', 2], ['jet_propulsion', 3], ['rocketry', 3], ['nuclear_weapons', 4]]) TECHS.find(x => x.id === id).ww2 = tier;
+// which tree is open (sim.js): null for the free ages, 'ww2' for the 1939 scenario
+let SCEN = null;
+export function setTechScenario(k) { SCEN = k; }
+export const techScenario = () => SCEN;
+export const WW2_TIER = ['Interwar', '1939–40', '1941–42', '1943–44', '1945'];
+export const w2Cost = k => Math.round(5200 * Math.pow(1.55, k));
+
 const TIERS = { internet: 1, social_media: 1, globalization: 1, renewables: 1, cyber_warfare: 1, counter_terrorism: 1, precision_munitions: 1, genetic_engineering: 1, electric_vehicles: 2,
   machine_learning: 2, robotics: 2, network_warfare: 2, stealth_tech: 2, missile_defense: 2, mass_surveillance: 2, autonomous_systems: 2, artificial_intelligence: 3, directed_energy: 3,
   vertical_farming: 3, technocracy: 4, fusion: 4, orbital_industry: 4, interstellar_travel: 5 };
 for (const x of TECHS) if (x.age === 9 && !x.tier) x.tier = TIERS[x.id] || 2;
 // modern technologies cost by tier: weeks for a superpower's laboratories, years for a small state
 export const tierCost = k => Math.round(26000 * Math.pow(1.38, k));
-export const TECH = {}; for (const x of TECHS) { x.cost = x.tier ? tierCost(x.tier) : Math.round(techCost(x.age) * (0.85 + 0.3 * (x.req.length ? 1 : 0) + (x.req.length > 1 ? 0.1 : 0))); TECH[x.id] = x; }
+export const TECH = {}; for (const x of TECHS) { x.cost = x.tier ? tierCost(x.tier) : x.ww2 ? w2Cost(x.ww2) : Math.round(techCost(x.age) * (0.85 + 0.3 * (x.req.length ? 1 : 0) + (x.req.length > 1 ? 0.1 : 0))); TECH[x.id] = x; }
 export const AGE_TECHS = AGES.map((_, a) => TECHS.filter(x => x.age === a));
 
-export function canResearch(N, id) { const x = TECH[id]; return !!x && !N.techs[id] && x.age <= N.age && x.req.every(r => N.techs[r]); }
+export function canResearch(N, id) { const x = TECH[id]; return !!x && !N.techs[id] && x.age <= N.age && (SCEN !== 'ww2' || x.age < 8 || !!x.ww2) && x.req.every(r => N.techs[r]); }
 export function available(N) { return TECHS.filter(x => canResearch(N, x.id)); }
 export function has(N, id) { return !!N.techs[id]; }
 // share of the current age's technologies known

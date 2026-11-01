@@ -2,7 +2,7 @@
 import { AGES } from './eras.js';
 import { UNITS, LINES, LINE_ORDER, bestOf } from './units.js';
 import { RES } from './resources.js';
-import { TECHS, TECH, BRANCHES, canResearch, AGE_TECHS, MODERN_BRANCH } from './tech.js';
+import { TECHS, TECH, BRANCHES, canResearch, AGE_TECHS, MODERN_BRANCH, WW2_TIER } from './tech.js';
 import { ROLES, CABINET, TRAITS, resolveEvent, roleTitle, styleName } from './gov.js';
 import { convene, execute, deny, confidence, MEETING_COOLDOWN_DAYS } from './cabinet.js';
 import { G, $, esc, fmt, pct, popStr, toast, dstr, stars, avatar, costStr, ICON } from './ui.js';
@@ -206,13 +206,19 @@ export function openTree() {
   // the modern frontier: tabs by tier, columns by branch
   const TIER_NAME = ['', 'Fielded in 2025', 'Near future', 'Next decade', 'Frontier', 'Breakthroughs'];
   const renderModern = () => {
-    const k = G.treeTier ||= 1;
-    const mod = TECHS.filter(x => x.age === 9 && x.tier);
-    let h = `<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;gap:12px"><div><div class="kicker">Research & development · ${mod.filter(x => N.techs[x.id]).length} of ${mod.length} frontier technologies</div><div style="font-size:22px;font-weight:800;color:var(--text-hi)">Tier ${k}: ${TIER_NAME[k]}</div><div class="small muted">${fmt(N.st.rp)} research per day. Technologies other nations already have are cheaper to develop. Click one to study it, or a locked one to queue it with its prerequisites.</div></div><button class="btn" id="closetree">Close</button></div>
-      <div class="agetabs">${[1, 2, 3, 4, 5].map(j => { const L = mod.filter(x => x.tier === j); const have = L.filter(x => N.techs[x.id]).length; return `<button class="agetab ${j === k ? 'on' : ''}" data-tier="${j}" style="--ac:${['', '#7fb4e8', '#57d2ff', '#a88be8', '#e0a83e', '#ff7a6b'][j]}">Tier ${j}<small>${have}/${L.length}</small></button>`; }).join('')}</div><div class="tree" style="grid-template-columns:repeat(8, minmax(130px, 1fr))">`;
+    const ww = !!sim.s.ww2;
+    // the 1939 tree: the interwar technologies still missing, then the wartime race by year
+    const tierOf = x => (ww ? (x.ww2 || (x.age === 7 ? 0 : null)) : x.age === 9 ? x.tier : null);
+    const tiers = ww ? [0, 1, 2, 3, 4] : [1, 2, 3, 4, 5], names = ww ? WW2_TIER : TIER_NAME;
+    if (!tiers.includes(G.treeTier)) G.treeTier = 1;
+    const k = G.treeTier;
+    const mod = TECHS.filter(x => tierOf(x) != null);
+    const label = j => (ww ? names[j] : `Tier ${j}`);
+    let h = `<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;gap:12px"><div><div class="kicker">${ww ? 'The race for the weapons of the war' : 'Research & development'} · ${mod.filter(x => N.techs[x.id]).length} of ${mod.length} ${ww ? 'technologies' : 'frontier technologies'}</div><div style="font-size:22px;font-weight:800;color:var(--text-hi)">${ww ? names[k] : `Tier ${k}: ${TIER_NAME[k]}`}</div><div class="small muted">${fmt(N.st.rp)} research per day. Technologies other nations already have are cheaper to develop. Click one to study it, or a locked one to queue it with its prerequisites.${ww ? ' The atomic bomb is not a laboratory project: it needs a national programme (see War in the Rule tab).' : ''}</div></div><button class="btn" id="closetree">Close</button></div>
+      <div class="agetabs">${tiers.map(j => { const L = mod.filter(x => tierOf(x) === j); const have = L.filter(x => N.techs[x.id]).length; return `<button class="agetab ${j === k ? 'on' : ''}" data-tier="${j}" style="--ac:${['#9aa3ad', '#7fb4e8', '#57d2ff', '#a88be8', '#e0a83e', '#ff7a6b'][j]}">${label(j)}<small>${have}/${L.length}</small></button>`; }).join('')}</div><div class="tree" style="grid-template-columns:repeat(8, minmax(130px, 1fr))">`;
     for (const b of BRANCHES) {
-      const list = mod.filter(x => x.branch === b.id && x.tier === k);
-      h += `<div><div class="col-h" style="background:color-mix(in srgb, ${b.color} 18%, transparent);color:${b.color}">${MODERN_BRANCH[b.id] || b.name}</div>`;
+      const list = mod.filter(x => x.branch === b.id && tierOf(x) === k);
+      h += `<div><div class="col-h" style="background:color-mix(in srgb, ${b.color} 18%, transparent);color:${b.color}">${(!ww && MODERN_BRANCH[b.id]) || b.name}</div>`;
       for (const t of list) {
         const st = N.techs[t.id] ? 'done' : canResearch(N, t.id) ? 'avail' : 'locked';
         const cost = sim.techCostFor(N, t.id);
@@ -245,7 +251,7 @@ G.fn.showEvent = function showEvent(ev) {
     return;
   }
   if (G.pauseOnEvents && G.speed) { G.prevSpeed = G.speed; G.fn.setSpeed(0); G.resumeAfterEvent = true; }
-  $('#event-card').innerHTML = `<div class="ek">${dstr()} · ${sim.s.modern ? 'Cabinet briefing' : esc(roleTitle('interior', N.age)) + '\'s report'}</div><h3>${esc(ev.title)}</h3><p>${esc(ev.text)}</p><div class="eo">${ev.options.map((o, k) => `<button class="btn" data-o="${k}">${esc(o)}</button>`).join('')}</div>`;
+  $('#event-card').innerHTML = `<div class="ek">${dstr()} · ${sim.s.ww2 ? 'War cabinet' : sim.s.modern ? 'Cabinet briefing' : esc(roleTitle('interior', N.age)) + '\'s report'}</div><h3>${esc(ev.title)}</h3><p>${esc(ev.text)}</p><div class="eo">${ev.options.map((o, k) => `<button class="btn ${/war crime/i.test(o) ? 'crime' : ''}" data-o="${k}">${esc(o)}</button>`).join('')}</div>`;
   $('#eventbox').classList.remove('hidden');
   for (const b of document.querySelectorAll('#event-card [data-o]')) b.onclick = () => {
     const out = resolveEvent(sim, N, ev, +b.dataset.o);
