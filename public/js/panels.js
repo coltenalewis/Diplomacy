@@ -15,6 +15,7 @@ import { lineOptions } from './units.js';
 import { repChips, repSection, pactsListHTML, bindPactsList, renderPactPage, answeredCall, applyPactProposal } from './pacts-ui.js';
 import { repOpinion, pactsOf, canJoin, invite, pactMods } from './pacts.js';
 import { BUDGET, BUDGET_BASE, budgetMods } from './modern.js';
+import { warHTML, bindWar, ww2RnD } from './ww2-ui.js';
 
 const REL_LABEL = { war: 'At war', peace: 'Peace', nap: 'Non-aggression', alliance: 'Alliance' };
 const traitChips = c => c.traits.map(t => `<span class="trait ${['Corrupt', 'Ambitious'].includes(t) ? 'bad' : ''}" title="${esc(TRAITS[t]?.desc || '')}">${t}</span>`).join('');
@@ -522,6 +523,7 @@ function renderGov(host) {
     <div class="grid2"><span>Influence</span><span>${Math.floor(g.pc)} (+${pcRate.toFixed(2)}/day)</span><span>War weariness</span><span>${pct(N.exhaustion)}</span></div>
     <div style="margin-top:10px"><button class="btn go" data-convene="1" ${cabinetReady() ? '' : 'disabled'}>${cabinetReady() ? 'Convene the council' : 'The council met recently'}</button></div></div>`;
   void ruler;
+  if (s.ww2) h += warHTML(sim, N);
   if (s.modern) h += leadershipHTML(sim, N);
   // forms of government (not in the modern world: constitutions do not change by menu)
   if (!s.modern) {
@@ -577,6 +579,7 @@ function renderGov(host) {
   }
   if (!setHTML(host, h)) return;
   if (s.modern) bindBudget(host, sim, N);
+  if (s.ww2) bindWar(host, sim, N, () => renderPanel(true));
   for (const b of host.querySelectorAll('[data-repl]')) b.onclick = () => { G.replRole = G.replRole === b.dataset.repl ? null : b.dataset.repl; renderPanel(true); };
   for (const b of host.querySelectorAll('[data-hire]')) b.onclick = () => { const r = appoint(sim, N, b.dataset.role, +b.dataset.hire); if (!r.ok) toast('Court', r.why, 'warn'); else toast('Court', `${s.chars[+b.dataset.hire].name} appointed.`, 'good'); G.replRole = null; renderPanel(true); };
   for (const b of host.querySelectorAll('[data-law]')) b.onclick = () => { const r = enact(sim, N, b.dataset.law, b.dataset.opt); if (!r.ok) toast('Laws', r.why, 'warn'); renderPanel(true); };
@@ -590,7 +593,7 @@ function renderAges(host) {
   const sim = G.sim, s = sim.s, P = s.player, N = s.nations[P], R = N.research;
   const A = AGES[N.age], nxt = s.modern ? null : AGES[N.age + 1];
   const have = AGE_TECHS[N.age].filter(t => N.techs[t.id]).length, total = AGE_TECHS[N.age].length, need = Math.ceil(ADVANCE_SHARE * total);
-  let h = s.modern ? modernRnD(sim, N) : `<div class="card agecard" style="--ac:${A.color}"><div class="kicker">${dstr()}</div><div class="big">${A.name}</div><div class="sub">${esc(A.blurb)}</div>`;
+  let h = s.ww2 ? ww2RnD(sim, N) : s.modern ? modernRnD(sim, N) : `<div class="card agecard" style="--ac:${A.color}"><div class="kicker">${dstr()}</div><div class="big">${A.name}</div><div class="sub">${esc(A.blurb)}</div>`;
   if (s.modern) { /* no ages: the frontier summary above */ }
   else if (nxt) {
     h += `<div class="grid2" style="margin-top:10px"><span>${A.short} technologies</span><span>${have} / ${total} (need ${need})</span></div><div class="meter"><i style="width:${pct(have / total)};background:var(--ac)"></i></div>`;

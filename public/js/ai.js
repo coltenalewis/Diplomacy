@@ -1,4 +1,5 @@
 // AI rulers for every non-player civilization, ministers acting on the player's directives, and AI responses to diplomacy.
+import { ww2MayAttack, ww2MayMakePeace, ww2Offensive, ww2MayRise, ww2Want, lostShare as lostShareW } from './ww2.js';
 import { pactsOf } from './pacts.js';
 import { UNITS, LINES, bestOf, BUILDINGS, WONDERS, SETTLEMENTS } from './units.js';
 import { RES, IMPROVEMENTS, IMP_ORDER, IMP_CAP, TERRAIN, known } from './resources.js';
@@ -259,9 +260,10 @@ export class AI {
     const sim = this.sim, s = sim.s, N = s.nations[c], st = N.st, t = N.traits;
     const wars = sim.warsOf(c);
     const threat = this.threatTo(c);
-    const tiles = st.tiles || 1;
+    const tiles = s.ww2 ? Math.max(2, (N.gdp || 10) / 6) * (N.occupied ? 0.3 : 1) : (st.tiles || 1); // in 1939 armies follow the economy, not the size of the map
     let want = 1 + tiles * (0.35 + 0.45 * t.aggression) * (N.age >= 1 ? 1 : 0.6) + wars.length * (2 + tiles * 0.2) + threat * 1.2;
     if (wars.length) want += N.warNeed || 0;
+    if (s.ww2) want = ww2Want(sim, N, wars, want); // total war: the great powers mobilise their whole economies
     if (focus === 'maintain') want = 1 + tiles * 0.4 + wars.length * 2;
     else if (focus === 'total') want = tiles * 1.5 + 6;
     else if (focus) want = tiles * 0.9 + 3;
@@ -372,8 +374,9 @@ export class AI {
         const aff = warAffinity(sim, c, o); // holy cities and kin under foreign rule
         sc += aff;
         // the modern order: wars only against real rivals or over kin and holy ground, and only with clear odds
-        if (s.modern && sim.opinion(c, o) > -35) continue;
-        if (s.modern) sc -= 1.2 + (s.nations[o].warheads ? 3.5 : 0) + (pactsOf(sim, o).some(P => P.doctrines.defense && !P.members.includes(c)) ? 1.5 : 0) + (sim.alliesOf(o).some(a => s.nations[a]?.warheads) ? 2.5 : 0); // deterrence: the bomb, the alliance and the nuclear umbrella
+        if (s.ww2) { if (!ww2MayAttack(sim, c, o)) continue; }
+        else if (s.modern && sim.opinion(c, o) > -35) continue;
+        if (s.modern && !s.ww2) sc -= 1.2 + (s.nations[o].warheads ? 3.5 : 0) + (pactsOf(sim, o).some(P => P.doctrines.defense && !P.members.includes(c)) ? 1.5 : 0) + (sim.alliesOf(o).some(a => s.nations[a]?.warheads) ? 2.5 : 0); // deterrence: the bomb, the alliance and the nuclear umbrella
         if (sc > bs) { bs = sc; best = o; }
       }
       if (best && bs > 2.2) sim.declareWar(c, best);
@@ -390,6 +393,7 @@ export class AI {
   vassalPolicy(c) {
     const sim = this.sim, s = sim.s, N = s.nations[c], t = N.traits;
     if (N.overlord && N.ai) {
+      if (s.ww2 && !ww2MayRise(sim, c)) return;
       const O = s.nations[N.overlord];
       const ratio = (this.power(N.overlord) + 1) / (this.power(c) + 1);
       const held = (s.t - (N.vassalSince || 0)) / 24;
@@ -434,6 +438,7 @@ export class AI {
       return;
     }
     const E = s.nations[e];
+    if (s.ww2 && !ww2MayMakePeace(sim, c, e)) return; // unconditional surrender
     if (s.modern ? (E.exhaustion > 0.5 || this.power(e) < this.power(c) * 0.8 || Math.random() < 0.02) : (E.exhaustion > 0.25 || this.power(e) < this.power(c) * 1.6 || Math.random() < 0.2)) sim.makePeace(c, e); // modern wars grind on until one side is spent
   }
 
@@ -453,7 +458,7 @@ export class AI {
     for (const u of air) {
       const T = UNITS[u.type];
       if (T.role === 'bomber') {
-        const tgt = s.regions.filter(r => !r.sea && wars.includes(r.owner) && kmBetween(sim.anchor(u.loc), sim.anchor(r.i)) <= T.radius).sort((a, b) => (enemyStrAt.get(b.i) || 0) + (b.bld.workshop || 0) - (enemyStrAt.get(a.i) || 0) - (a.bld.workshop || 0))[0];
+        const tgt = s.regions.filter(r => !r.sea && wars.includes(r.owner) && (!s.ww2 || ww2Offensive(sim, c, r.owner)) && kmBetween(sim.anchor(u.loc), sim.anchor(r.i)) <= T.radius).sort((a, b) => (enemyStrAt.get(b.i) || 0) + (b.bld.workshop || 0) - (enemyStrAt.get(a.i) || 0) - (a.bld.workshop || 0))[0];
         u.mission = tgt ? { strike: tgt.i } : null;
       }
       const stage = (N.campaigns || [])[0]?.stage;
@@ -530,6 +535,7 @@ export class AI {
       const rep = free[0];
       const cand = [];
       for (const e of wars) for (const r of sim.regionsOf(e)) {
+        if (s.ww2 && !ww2Offensive(sim, c, e)) break;
         const km = kmBetween(base, sim.anchor(r.i));
         if (km > 4500) continue;
         const n = need(r.i);
@@ -1020,6 +1026,7 @@ export class AI {
       ok = sc > 3; why = ok ? (commonEnemy ? 'Together we will crush our common enemy.' : (rep.steadfast || 0) > 25 ? 'Your word is known to be good.' : 'Our friendship has earned this.') : (rep.oathbreaker || 0) > 25 ? 'You have broken your word before. We will not tie our fate to yours.' : op < 20 ? 'We do not yet trust you enough.' : 'An alliance does not serve us now.';
     } else if (p.type === 'peace') {
       if (rel !== 'war') return { ok: false, why: 'We are not at war.' };
+      if (s.ww2 && !ww2MayMakePeace(sim, ai, from) && !(A.exhaustion > 0.7 && lostShareW(sim, ai) > 0.3)) return { ok: false, why: 'There will be no separate peace. Only unconditional surrender ends this war.' };
       const sc = A.exhaustion * 4 + (theirP > myP ? 1.5 : -0.5) + t.caution + op / 50 - t.aggression;
       ok = sc > 1; why = ok ? 'Enough blood has been shed.' : 'We are winning. No peace.';
     } else if (p.type === 'trade') {

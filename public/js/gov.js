@@ -227,6 +227,9 @@ export function computeMods(s, N) {
   const lux = N.luxCount || 0;
   m.approval += Math.min(0.15, lux * 0.012); m.stability += Math.min(0.006, lux * 0.0006);
   if (s.nukesUsed > 6) m.food -= Math.min(0.4, (s.nukesUsed - 6) * 0.04); // nuclear winter
+  if (N.gasUntil > s.t) m.atkLand += 0.3; // poison gas on the front (ww2.js)
+  if (N.doctrine) { const k = N.doctrine.fade ? Math.max(0.25, Math.min(1, 1 - (s.t / 24 / 365 - 1.8) / 1.7)) : 1; for (const [x, v] of Object.entries(N.doctrine)) if (x !== 'fade') m[x] = (m[x] || 0) + v * (v > 0 ? k : 1); } // how each army fought in 1939 (ww2.js)
+  for (const b of N.boosts || []) if (b.until > s.t) for (const [k, v] of Object.entries(b.fx)) m[k] = (m[k] || 0) + v; // wartime edges and handicaps (ww2-events.js)
   if (N.aiBonus) { m.food += N.aiBonus * 0.15; m.wealth += N.aiBonus * 0.15; m.research += N.aiBonus * 0.12; m.prod += N.aiBonus * 0.1; }
   N.mods = m;
   return m;
@@ -434,12 +437,14 @@ export const EVENTS = [
       { label: 'Pause and audit', fx: (sim, N) => { N.gov.stability += 0.03; return 'The system is sandboxed pending review.'; } }] },
 ];
 
-EVENTS.push(...MODERN_EVENTS);
+EVENTS.push(...MODERN_EVENTS); // the 1939 deck joins from ww2-events.js
 
+export const scenarioOf = s => (s.ww2 ? 'ww2' : s.modern ? 'modern' : null);
 export function rollEvent(sim, N) {
   const order = [...EVENTS].sort(() => Math.random() - 0.5);
   for (const e of order) {
-    if (!!e.modern !== !!sim.s.modern) continue; // the modern world has its own deck (modern-events.js)
+    if ((e.scen || (e.modern ? 'modern' : null)) !== scenarioOf(sim.s)) continue; // each world has its own deck (modern-events.js, ww2-events.js)
+    if (e.timeline) continue; // dated events fire on their day (ww2-events.js)
     if (N.lastEvents?.includes(e.id)) continue;
     if ((e.minAge ?? 0) > N.age || (e.maxAge ?? 99) < N.age) continue;
     const ctx = e.when(sim, N); if (!ctx) continue;

@@ -38,7 +38,7 @@ const GROWTH = { China: -0.001, Japan: -0.005, Russia: -0.003, 'South Korea': -0
 const ELECTIONS = { Canada: 117, Australia: 122, Poland: 130, 'South Korea': 153, Philippines: 133, Germany: 1520, 'United Kingdom': 1600, Japan: 1300, India: 1580, Brazil: 640, France: 840,
   'United States of America': 1404, Argentina: 1020, Mexico: 1250, Italy: 950, Spain: 940, Turkey: 1210, Israel: 660, 'South Africa': 1580, Indonesia: 1500, Ukraine: 1000, Taiwan: 1105 };
 // names that take the article in English: "the United States", but "France"
-const ARTICLE = new Set(['United States', 'United Kingdom', 'Netherlands', 'Philippines', 'UAE', 'Czech Republic', 'Central African Republic', 'Dominican Republic', 'Falkland Islands', 'DR Congo', 'Gambia', 'Bahamas', 'Comoros', 'Maldives']);
+const ARTICLE = new Set(['Soviet Union', 'British Raj', 'Dutch East Indies', 'United States', 'United Kingdom', 'Netherlands', 'Philippines', 'UAE', 'Czech Republic', 'Central African Republic', 'Dominican Republic', 'Falkland Islands', 'DR Congo', 'Gambia', 'Bahamas', 'Comoros', 'Maldives']);
 // formal names that take the article: "the French Republic", "the Republic of Korea", but "Japan", "Ukraine"
 export const officialTakesThe = f => /\bof\b/.test(f) || /^(United|Russian|Swiss|Hellenic|Czech|Slovak|Kyrgyz|Dominican|Central|Hashemite|Federal|Lao|Islamic|Gabonese|Togolese|Argentine|French|Italian|Portuguese|Commonwealth|Co-operative|Oriental|Federative|Plurinational|Bolivarian|Arab|Democratic|Socialist|Sultanate|State|Republic|Kingdom|Swiss|Slovak)\b/.test(f);
 export const theOfficial = N => (N.official && officialTakesThe(N.official) ? 'the ' : '') + (N.official || N.name);
@@ -57,7 +57,8 @@ export function worldMarket(sim, N) {
     if ((N[g] || 0) >= reserve) continue;
     const need = Math.max(0, reserve - (N[g] || 0)) * 0.25 + Math.max(0, -(st.net?.[g] || 0));
     const price = (s.prices[g] || 1) * 1.15, afford = Math.max(0, N.wealth || 0) / price;
-    const buy = Math.min(need, afford * 0.5);
+    if (g === 'oil' && N.embargo) continue; // under embargo: no oil to be had at any price
+    const buy = Math.min(need, afford * 0.5) * (1 - (N.blockade || 0));
     if (buy <= 0) continue;
     N[g] = (N[g] || 0) + buy; N.wealth -= buy * price;
     N.imports = N.imports || {}; N.imports[g] = buy;
@@ -118,7 +119,7 @@ export function setupModern(sim, opts) {
   for (const code of all) seedStores(sim, s.nations[code]);
 }
 
-function makePact(s, key, name, preset, doctrines, members, chair, color) {
+export function makePact(s, key, name, preset, doctrines, members, chair, color) {
   const d = {}; for (const x of doctrines) d[x] = true;
   return { id: s.pactId++, key, name, preset, founder: chair, chair, members: members.slice(), doctrines: d, faith: null, color, founded: -24 * 365 * 30, nextSession: 24 * (30 + Math.round(Math.random() * 60)), log: [], bonus: { trade: 0, research: 0 } };
 }
@@ -183,7 +184,7 @@ function createCountry(sim, c, tiles, code) {
 }
 
 // people, cities, infrastructure and land improvements, according to population and development
-function developLand(sim, N, c, tiles, dev) {
+export function developLand(sim, N, c, tiles, dev) {
   const s = sim.s, T = sim.T;
   const weights = tiles.map(i => Math.max(0.03, T[i].hab) * (1 + Math.min(4, (T[i].lights || 0) * 20)) * (T[i].river ? 1.3 : 1) * (T[i].coastal ? 1.15 : 1) * (i === N.capital ? 3 : 1));
   const tot = weights.reduce((a, b) => a + b, 0) || 1;
@@ -210,7 +211,7 @@ function developLand(sim, N, c, tiles, dev) {
     }
     for (const [k3, I] of Object.entries(IMPROVEMENTS)) {
       if ((I.tech && !N.techs[I.tech]) || !I.need(sim.tileInfo(i), N)) continue;
-      if (Math.random() < 0.75) r.imp[k3] = Math.max(1, Math.round(IMP_CAP[MODERN_AGE] * (0.25 + dev * 0.45) * (0.6 + Math.random() * 0.6)));
+      if (Math.random() < 0.75) r.imp[k3] = Math.max(1, Math.round(IMP_CAP[N.age] * (0.25 + dev * 0.45) * (0.6 + Math.random() * 0.6)));
     }
     r.pop = Math.min(want, sim.housing(r, N) * 0.97);
   });
@@ -218,7 +219,8 @@ function developLand(sim, N, c, tiles, dev) {
 }
 
 // standing forces sized to real military strength
-function raiseForces(sim, N, c, tiles) {
+const CARRIERS = { 'United States of America': 6, China: 3, 'United Kingdom': 2, India: 2, France: 1, Italy: 1, Russia: 1, Spain: 1 };
+export function raiseForces(sim, N, c, tiles, carriers = CARRIERS) {
   const s = sim.s, w = sim.w;
   const land = Math.round(1 + c.mil * 0.32);
   const mix = ['INF', 'CAV', 'INF', 'SGE', 'INF', 'AA', 'CAV', 'RNG'];
@@ -231,8 +233,7 @@ function raiseForces(sim, N, c, tiles) {
     if (sea >= 0) {
       const ships = Math.round(c.mil * 0.12);
       for (let k = 0; k < ships; k++) { const t = bestOf(N, k % 4 === 3 && c.mil > 30 ? 'SUB' : 'NAV'); if (t) sim.spawn(N.code, t, sea); }
-      const carriers = { 'United States of America': 6, China: 3, 'United Kingdom': 2, India: 2, France: 1, Italy: 1, Russia: 1, Spain: 1 }[c.n] || 0;
-      for (let k = 0; k < carriers; k++) { const t = bestOf(N, 'CAR'); if (t) sim.spawn(N.code, t, sea); }
+      for (let k = 0; k < (carriers[c.n] || 0); k++) { const t = bestOf(N, 'CAR'); if (t) sim.spawn(N.code, t, sea); }
       if (c.mil > 30) { const t = bestOf(N, 'TRN'); if (t) sim.spawn(N.code, t, sea); }
     }
   }
@@ -242,7 +243,7 @@ function raiseForces(sim, N, c, tiles) {
 }
 
 // two countries at war face each other along their border
-function frontLine(sim, a, b) {
+export function frontLine(sim, a, b) {
   const s = sim.s, w = sim.w;
   for (const [x, y] of [[a, b], [b, a]]) {
     const border = [...sim.owned.get(x)].filter(i => w.adj[i].some(j => s.regions[j].owner === y));
@@ -259,31 +260,33 @@ const OIL = { 'Saudi Arabia': 6, Russia: 3, Iraq: 5, 'United Arab Emirates': 5, 
 const FOOD_SELF = { 'United States of America': 1.3, Brazil: 1.45, Argentina: 1.6, Canada: 1.45, Australia: 1.5, Russia: 1.25, Ukraine: 1.5, France: 1.25, Kazakhstan: 1.2, Thailand: 1.25,
   Vietnam: 1.15, 'New Zealand': 1.5, Uruguay: 1.4, Paraguay: 1.4, India: 1.05, Indonesia: 1.0, China: 1.0, Japan: 0.75, 'South Korea': 0.65, 'United Kingdom': 0.75, Netherlands: 1.1,
   Egypt: 0.7, 'Saudi Arabia': 0.7, 'United Arab Emirates': 0.45, Qatar: 0.4, Kuwait: 0.45, Oman: 0.55, Singapore: 0.35, Israel: 0.75, Algeria: 0.7, Libya: 0.6, Yemen: 0.55, Jordan: 0.6, Taiwan: 0.65 };
-function seedStores(sim, N) {
+// K: calibration of a scenario (the 2025 world by default): food self-sufficiency and oil tables, output per unit of GDP
+const K2025 = { food: null, oil: null, wealth: 0.015, metal: 0.011, wood: 0.005, rp: 0.07, treasury: [30, 50] };
+export function seedStores(sim, N, K = K2025) {
   sim.recalcNation(N.code);
   // modern agriculture: scale farm output so the country starts near its real self-sufficiency
-  const wantFood = (N.st.foodCons || 0) * (FOOD_SELF[N.country] ?? 1.02);
-  N.agri = clamp(wantFood / Math.max(0.01, N.st.prod?.food || 0.01), 1, 400);
+  const wantFood = (N.st.foodCons || 0) * ((K.food || FOOD_SELF)[N.country] ?? 1.02);
+  N.agri = clamp(wantFood / Math.max(0.01, N.st.prod?.food || 0.01), 0.2, 400);
   // power grids that roughly meet demand, and the oil fields of the producers
   N.power = clamp((N.st.eCons || 0) * (1.02 + N.dev * 0.08) / Math.max(1, N.st.energy || 1), 1, 300);
-  N.oilBase = ((N.st.upkeep?.oil || 0) + 2 + (N.st.eCons || 0) * 0.004) * (OIL[N.country] || 0);
+  N.oilBase = ((N.st.upkeep?.oil || 0) + 2 + (N.st.eCons || 0) * 0.004) * ((K.oil || OIL)[N.country] || 0);
   if (N.st.energy < N.st.eCons * 0.05) { N.power = 1; N.powerAdd = N.st.eCons * (0.6 + 0.45 * N.dev); } // grids without big plants: imports, diesel, hydro
   sim.recalcNation(N.code);
   // output in proportion to the real economy: revenue, industry, materials and research scale with GDP
   const P = N.st.raw || {}, ind = 0.45 + 0.55 * N.dev;
-  const want = { wealth: N.gdp * 0.015, metal: N.gdp * 0.011 * ind, wood: N.gdp * 0.005 + 0.4, stone: N.gdp * 0.005 + 0.4 };
+  const want = { wealth: N.gdp * K.wealth, metal: N.gdp * K.metal * ind, wood: N.gdp * K.wood + 0.4, stone: N.gdp * K.wood + 0.4 };
   // remember the raw output each target corresponds to; recalcNation maps raw output to real output from there
   N.econ0 = {};
   for (const k in want) N.econ0[k] = { raw: Math.max(0.001, P[k] || 0.001), want: want[k] };
   sim.recalcNation(N.code);
-  const rpWant = N.gdp * 0.07 * (0.3 + 0.7 * N.dev); // research in proportion to the economy and its development
+  const rpWant = N.gdp * K.rp * (0.3 + 0.7 * N.dev); // research in proportion to the economy and its development
   N.econ0.rp = { raw: Math.max(1e-3, N.st.raw.rp), want: Math.max(0.5, rpWant / (1 + (N.mods.research || 0)) - N.st.researchSpend * 1.6) };
   sim.recalcNation(N.code);
   const st = N.st, cap = k => sim.storageCap(N, k);
   N.food = Math.max(20, (st.foodCons || 1) * 45);
   for (const k of ['wood', 'stone', 'metal']) N[k] = cap(k) * 0.55;
   N.oil = cap('oil') * (N.blocs?.includes('OPEC') ? 0.85 : 0.35);
-  N.wealth = Math.max(50, (st.prod?.wealth || 0) * (30 + 50 * N.dev)); // a few months of revenue: debt-laden states start leaner
+  N.wealth = Math.max(50, (st.prod?.wealth || 0) * (K.treasury[0] + K.treasury[1] * N.dev)); // a few months of revenue: debt-laden states start leaner
 }
 
 // the national budget: shares of discretionary spending shift the nation's priorities (relative to a balanced split)

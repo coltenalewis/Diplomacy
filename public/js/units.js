@@ -43,6 +43,7 @@ export const VARIANTS = [
   ['CAVC2', 'CAV', 2, 'Camel Riders', 'camel_domestication', { needs: ['camels'], speed: 165 }, { atk: 0.95, def: 1.05, hp: 1.05, cost: 0.95 }],
   ['CAVC5', 'CAV', 5, 'Camel Corps', 'camel_domestication', { needs: ['camels', 'saltpeter'], speed: 180 }, { atk: 0.95, def: 1.05, hp: 1.05, cost: 0.95 }],
   ['INFO0', 'INF', 0, 'Obsidian Warriors', 'stone_tools', { needs: ['obsidian'] }, { atk: 1.3, def: 1.1, hp: 1, cost: 1.15 }],
+  ['CAVH8', 'CAV', 8, 'Heavy Tanks', 'heavy_tanks', { needs: ['oil'], speed: 165, sym: 'arm' }, { atk: 0.92, def: 0.95, hp: 1, cost: 1.1 }],
   ['RNGL9', 'RNG', 9, 'Loitering Drone Team', 'batteries', { needs: ['lithium', 'cobalt'], antiArmor: true, aa: true, range: 160 }, { atk: 1.2, def: 1, hp: 1, cost: 1.2 }],
 ];
 

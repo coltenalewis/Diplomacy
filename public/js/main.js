@@ -10,7 +10,8 @@ import { initFloatPanel } from './floatpanel.js';
 import { openSessionDialog } from './pacts-ui.js';
 import { pactById } from './pacts.js';
 import { COUNTRIES, P5, WARS, FAITHS_2025 } from './countries.js';
-import { territories, countryByName, devOf, theOfficial } from './modern.js';
+import { territories, countryByName as countryByName25, devOf, theOfficial } from './modern.js';
+import { territories1939, nations1939, dev1939 } from './ww2.js';
 import { TERRAIN, RES, classify, generateDeposits, rng, known } from './resources.js';
 import { styleName, resolveEvent, GOV_TYPES } from './gov.js';
 import { civColor } from './names.js';
@@ -23,7 +24,9 @@ import { SCENARIOS } from './crises.js';
 import { seasonName, SEASON_ICON, cold } from './seasons.js';
 
 const SAVE_KEY = 'agesofcommand.v1';
-const SUN0 = Date.UTC(2025, 0, 1, 6, 0, 0); // game hour 0: dawn over Greenwich, 1 January 2025
+const SUN25 = Date.UTC(2025, 0, 1, 6, 0, 0); // game hour 0: dawn over Greenwich, 1 January 2025 (or 1 September 1939)
+const SUN39 = Date.UTC(1939, 8, 1, 6, 0, 0);
+const sun0 = () => (G.sim?.s.ww2 ? SUN39 : SETUP.mode === 'ww2' && !G.sim ? SUN39 : SUN25);
 const SETTLE_GLYPH = ['', '⛺', '🛖', '🏘️', '🏛️', '🏙️', '🌆'];
 
 // ======================================================================= boot
@@ -35,7 +38,7 @@ async function boot() {
   G.globe = new Globe($('#globe'), G.world, json);
   G.globe.initUnits();
   await G.globe.load();
-  G.globe.setSunHours(SUN0, 0);
+  G.globe.setSunHours(SUN25, 0);
   Object.assign(G.fn, { openImperial, renderPanel, switchTab, answer, openDossier, selectRegion, computeStacks, renderSelbar, updateRings, refreshWorld, setSpeed, orderTo, selectedUnits, airborne, flyTile, showSetup, save, eta, renderTop });
   bindInput();
   bindChrome();
@@ -45,8 +48,16 @@ async function boot() {
 }
 
 // ======================================================================= setup
-const SETUP = { country: 'United States of America', grp: 'great', q: '', scenario: 'standard', emerge: 1, civs: 24, age: 0, diff: 0, temper: 1, conquest: 0.5, name: '', color: '#4f8dff', tile: null, seed: Math.floor(Math.random() * 2 ** 31) };
+const SETUP = { mode: '2025', c39: 'United Kingdom', country: 'United States of America', grp: 'great', q: '', scenario: 'standard', emerge: 1, civs: 24, age: 0, diff: 0, temper: 1, conquest: 0.5, name: '', color: '#4f8dff', tile: null, seed: Math.floor(Math.random() * 2 ** 31) };
 const COLORS = ['#4f8dff', '#e6194b', '#3cb44b', '#ffe119', '#f58231', '#911eb4', '#46f0f0', '#f032e6', '#bcf60c', '#ff9ec4', '#00a6a6', '#c9a0ff', '#b8742a', '#ffffff'];
+// ---- the world you play: 2025, or 1 September 1939
+const W39 = () => SETUP.mode === 'ww2';
+const landsNow = () => (W39() ? (G.lands39 ||= territories1939(G.world)) : (G.lands ||= territories(G.world)));
+const nats39 = () => (G.nats39 ||= nations1939(landsNow()));
+const countryByName = n => (W39() ? nats39().find(d => d.k === n) : countryByName25(n));
+const pickKey = () => (W39() ? SETUP.c39 : SETUP.country);
+const setPick = n => { if (W39()) SETUP.c39 = n; else SETUP.country = n; };
+const modeTabs = () => `<div class="mode-tabs"><button class="mode-tab ${W39() ? '' : 'on'}" data-mode="2025"><b>The world of 2025</b><small>Lead a real country today: economy, elections, blocs, the UN.</small></button><button class="mode-tab ww2 ${W39() ? 'on' : ''}" data-mode="ww2"><b>The Second World War</b><small>1 September 1939: the Axis, the Allies, total war.</small></button></div>`;
 // ---- choose the country you lead (the world of 2025)
 const GROUPS = { all: 'All', great: 'Great powers', NATO: 'NATO', EU: 'EU', BRICS: 'BRICS', nuclear: 'Nuclear states', AU: 'Africa', ASEAN: 'ASEAN' };
 const GREAT = ['United States of America', 'China', 'Russia', 'India', 'United Kingdom', 'France', 'Germany', 'Japan'];
@@ -65,6 +76,7 @@ function briefing(c) {
 }
 function showSetup() {
   setSpeed(0); G.pick = null; $('#pickbar').classList.add('hidden');
+  if (W39()) return showSetup39();
   const saved = loadSaved();
   const lands = G.lands ||= territories(G.world);
   const opt = (k, v, label, small) => `<button class="btn ${SETUP[k] === v ? 'on' : ''}" data-k="${k}" data-v="${v}">${label}${small ? `<small>${small}</small>` : ''}</button>`;
@@ -74,7 +86,7 @@ function showSetup() {
   const milBar = v => `<span class="milbar"><i style="width:${Math.min(100, v)}%"></i></span>`;
   $('#modal-card').innerHTML = `
     <div class="kicker">1 January 2025 · the world as it is</div>
-    <h1>Ages of <span>Command</span></h1>
+    <h1>Ages of <span>Command</span></h1>${modeTabs()}
     <p class="muted">Lead a real nation through the world of 2025. Run its economy and its politics, answer crises, win elections or crush dissent, build alliances and blocs, outvote rivals at the United Nations, research the technologies of tomorrow, and decide when, if ever, to go to war.</p>
     <div class="cp-wrap">
       <div class="cp-list">
@@ -110,6 +122,10 @@ function showSetup() {
   for (const b of card.querySelectorAll('[data-grp]')) b.onclick = () => { SETUP.grp = b.dataset.grp; showSetup(); };
   for (const b of card.querySelectorAll('[data-cty]')) b.onclick = () => { SETUP.country = b.dataset.cty; const sc = card.querySelector('.cp-rows').scrollTop; showSetup(); $('#modal-card .cp-rows').scrollTop = sc; };
   const qi = $('#cp-q'); qi.oninput = () => { SETUP.q = qi.value; if (SETUP.q && SETUP.grp !== 'all') SETUP.grp = 'all'; showSetup(); const x = $('#cp-q'); x.focus(); x.setSelectionRange(x.value.length, x.value.length); };
+  bindSetupCommon(card, saved);
+}
+function bindSetupCommon(card, saved) {
+  for (const b of card.querySelectorAll('[data-mode]')) b.onclick = () => { SETUP.mode = b.dataset.mode; SETUP.q = ''; showSetup(); };
   $('#cp-map').onclick = beginPick;
   $('#st-go').onclick = () => startGame();
   $('#st-help').onclick = () => showManual(true);
@@ -117,31 +133,105 @@ function showSetup() {
   $('#modal').classList.remove('hidden');
 }
 
+// ---- choose the nation you lead (1 September 1939)
+const GROUPS39 = { great: 'Great powers', Axis: 'Axis', Allies: 'Allies', Comintern: 'Comintern', neutral: 'Neutrals', all: 'All' };
+const GREAT39 = ['Germany', 'United Kingdom', 'France', 'Soviet Union', 'United States', 'Japan', 'Italy', 'China'];
+const fmtGdp39 = b => '$' + Math.round(b) + ' bn (1990 $)';
+const BRIEF39 = {
+  Germany: 'Your armies are in Poland. Britain and France have pledged to defend it. Win quickly, before the world can unite against you, or the war will be long, and you will be judged for how you fought it.',
+  'United Kingdom': 'Germany has invaded Poland, whose independence you guaranteed. An empire on which the sun never sets, and a navy that rules the waves: but your army is small and the Luftwaffe is near.',
+  France: 'Allied to Poland and to Britain. The Maginot Line guards the frontier; the army is large but slow. The question is where the Germans will strike.',
+  Poland: 'Attacked from the west at dawn, and soon from the east too. Hold out until Britain and France strike Germany, or fight on from exile.',
+  'Soviet Union': 'A pact with Hitler bought you time and a secret share of Eastern Europe. It will not last forever. Build, purge or reform, and prepare.',
+  'United States': 'Neutral, isolationist, and the greatest industrial power on Earth. Every belligerent wants your factories. When, and for whom, will you fight?',
+  Japan: 'Two years into a war in China that will not end, and dependent on American oil. The resources of the south beckon; so does a war with the United States.',
+  Italy: 'Allied to Germany by the Pact of Steel, but not ready for a great war. Wait, and the spoils go to others; strike too early, and Italy pays.',
+  China: 'Two years of war against Japan have cost you the coast and the capital. Trade space for time; the world may yet come to your aid.',
+  Finland: 'Moscow will soon demand your border lands. Your army is small, your forests deep, and your winters long.',
+};
+function briefing39(c) {
+  if (BRIEF39[c.k]) return BRIEF39[c.k];
+  if (c.lord) return `A possession of ${countryByName(c.lord)?.s || c.lord}: its fate is bound to its master's.`;
+  if (c.side === 'Allies') return 'Bound to the Allies. Whether you fight is a matter of honour, and of survival.';
+  if (c.side === 'Axis') return 'Bound to the Axis. Germany expects you to march when it marches.';
+  return 'Neutral, for now. The great powers will court you, threaten you, or invade you.';
+}
+function showSetup39() {
+  const saved = loadSaved();
+  const lands = landsNow(), all = nats39();
+  const opt = (k, v, label, small) => `<button class="btn ${SETUP[k] === v ? 'on' : ''}" data-k="${k}" data-v="${v}">${label}${small ? `<small>${small}</small>` : ''}</button>`;
+  const q = (SETUP.q || '').toLowerCase(), grp = GROUPS39[SETUP.grp39] ? SETUP.grp39 : (SETUP.grp39 = 'great');
+  const list = all.filter(d => lands.has(d.k)).filter(d => grp === 'all' || (grp === 'great' ? GREAT39.includes(d.k) : grp === 'neutral' ? !d.side : d.side === grp)).filter(d => !q || d.s.toLowerCase().includes(q) || d.k.toLowerCase().includes(q)).sort((a, b) => b.gdp - a.gdp);
+  const sel = countryByName(SETUP.c39) || countryByName('United Kingdom');
+  const milBar = v => `<span class="milbar"><i style="width:${Math.min(100, v)}%"></i></span>`;
+  const lord = sel.lord ? countryByName(sel.lord) : null;
+  $('#modal-card').innerHTML = `
+    <div class="kicker">1 September 1939 · the world at war</div>
+    <h1>Ages of <span>Command</span></h1>${modeTabs()}
+    <p class="muted">Lead a nation through the Second World War. Mobilise the economy and the home front, hold your coalition together, race for radar, jets and the bomb, decide the great choices of the war as they come, and answer for how your forces fight.</p>
+    <p class="ww2-note">Governments here can order acts the laws of war forbid: terror bombing, reprisals against civilians, forced labour, poison gas. The game names them as war crimes and makes them costly. It does not portray the Holocaust or other genocides as playable actions; leaders are fictional, and no party symbols are shown.</p>
+    <div class="cp-wrap">
+      <div class="cp-list">
+        <div class="opt-row" style="gap:6px;flex-wrap:wrap">${Object.entries(GROUPS39).map(([k, v]) => `<button class="chip ${grp === k ? 'on' : ''}" data-grp39="${k}">${v}</button>`).join('')}</div>
+        <input class="inp" id="cp-q" placeholder="Search ${all.length} nations..." value="${esc(SETUP.q || '')}" style="width:100%;margin:8px 0">
+        <div class="cp-rows">${list.map(d => `<div class="cp-row ${d.k === sel.k ? 'on' : ''}" data-cty="${esc(d.k)}"><span class="flagchip" style="background:${d.col || '#8a93a6'}"></span><span class="cp-n">${esc(d.s)}</span><span class="cp-g">${d.side ? esc(d.side) : ''}</span></div>`).join('') || '<div class="muted small">No nation matches.</div>'}</div>
+      </div>
+      <div class="cp-detail">
+        <div class="cp-flag" style="background:${sel.col || '#8a93a6'}"></div>
+        <h2 style="margin:6px 0 2px">${esc(sel.f)}</h2>
+        <div class="muted small">${esc(GOV_TYPES[sel.gov]?.name || sel.gov)}${sel.cap ? ` · capital ${esc(sel.cap[0])}` : ''}${lord ? ` · under ${esc(lord.s)}` : ''}</div>
+        <div class="grid2" style="margin-top:10px">
+          <span>Population</span><span>${fmtPop(sel.pop)}</span>
+          <span>Economy (GDP)</span><span>${fmtGdp39(sel.gdp)}</span>
+          <span>Armed forces</span><span>${milBar(sel.mil)} ${sel.mil >= 60 ? 'great power' : sel.mil >= 25 ? 'strong' : sel.mil >= 10 ? 'capable' : sel.mil >= 4 ? 'modest' : 'token'}</span>
+          <span>Coalition</span><span>${sel.side ? esc(sel.side) : 'neutral'}</span>
+          <span>Industry</span><span>${dev1939(sel) > 0.75 ? 'industrial power' : dev1939(sel) > 0.5 ? 'industrialising' : 'agrarian'}</span>
+          <span>Territory</span><span>${lands.get(sel.k)?.length || 0} provinces</span>
+        </div>
+        <p class="small" style="margin-top:10px">${esc(briefing39(sel))}</p>
+        <button class="btn" id="cp-map" style="margin-top:4px">Choose on the map instead &#9656;</button>
+      </div>
+    </div>
+    <h2>Rival governments</h2>
+    <div class="opt-row">${opt('diff', -0.2, 'Forgiving', 'Rivals produce less and forgive easily')}${opt('diff', 0, 'Historical', 'An even contest')}${opt('diff', 0.3, 'Hardball', 'Rivals out-produce you and trust you less')}</div>
+    <div class="modal-foot">
+      ${saved ? `<button class="btn" id="st-resume">Resume: ${esc(saved.name)} (${esc(saved.when)})</button>` : ''}
+      <button class="btn" id="st-help">Manual</button>
+      <button class="btn go" id="st-go">Lead ${esc(sel.s)} &#9656;</button>
+    </div>`;
+  const card = $('#modal-card');
+  for (const b of card.querySelectorAll('[data-k]')) b.onclick = () => { SETUP[b.dataset.k] = +b.dataset.v; showSetup(); };
+  for (const b of card.querySelectorAll('[data-grp39]')) b.onclick = () => { SETUP.grp39 = b.dataset.grp39; showSetup(); };
+  for (const b of card.querySelectorAll('[data-cty]')) b.onclick = () => { SETUP.c39 = b.dataset.cty; const sc = card.querySelector('.cp-rows').scrollTop; showSetup(); $('#modal-card .cp-rows').scrollTop = sc; };
+  const qi = $('#cp-q'); qi.oninput = () => { SETUP.q = qi.value; if (SETUP.q && SETUP.grp39 !== 'all') SETUP.grp39 = 'all'; showSetup(); const x = $('#cp-q'); x.focus(); x.setSelectionRange(x.value.length, x.value.length); };
+  bindSetupCommon(card, saved);
+}
+
 // ---- or pick the country on the globe
-function countryAt(i) { const lands = G.lands ||= territories(G.world); for (const [n, tiles] of lands) if (tiles.includes(i)) return n; return null; }
+function countryAt(i) { const lands = landsNow(); for (const [n, tiles] of lands) if (tiles.includes(i)) return n; return null; }
 function beginPick() {
   $('#modal').classList.add('hidden');
-  G.pick = { tile: null, country: SETUP.country };
+  G.pick = { tile: null, country: pickKey() };
   renderPick();
   $('#pickbar').classList.remove('hidden');
-  const c = countryByName(SETUP.country); if (c) G.globe.flyTo(c.cap[1], c.cap[2], 2.2);
+  const c = countryByName(pickKey()); if (c?.cap) G.globe.flyTo(c.cap[1], c.cap[2], 2.2);
 }
 function renderPick() {
   if (G.pick.tile !== null && G.pick.tile !== undefined) { const n = countryAt(G.pick.tile); if (n) G.pick.country = n; }
   const c = countryByName(G.pick.country);
-  $('#pickbar').innerHTML = `<div class="pk-main">${c ? `<b>${esc(c.f)}</b> · ${esc(GOV_TYPES[c.gov]?.name || '')} · ${fmtPop(c.pop)} people · ${fmtGdp(c.gdp)} · ${esc(briefing(c))}` : 'Click a country on the globe.'}</div>
+  $('#pickbar').innerHTML = `<div class="pk-main">${c ? `<b>${esc(c.f)}</b> · ${esc(GOV_TYPES[c.gov]?.name || '')} · ${fmtPop(c.pop)} people · ${W39() ? fmtGdp39(c.gdp) : fmtGdp(c.gdp)} · ${esc(W39() ? briefing39(c) : briefing(c))}` : 'Click a country on the globe.'}</div>
     <div class="pk-btns"><button class="btn" id="pk-back">&#9666; Back</button><button class="btn" id="pk-rand">Random country</button><button class="btn go" id="pk-go" ${c ? '' : 'disabled'}>Lead ${c ? esc(c.s) : 'this country'} &#9656;</button></div>`;
   $('#pk-back').onclick = () => { G.pick = null; paintPick(); showSetup(); };
-  $('#pk-rand').onclick = () => { const all = [...(G.lands ||= territories(G.world)).keys()]; G.pick.country = all[(Math.random() * all.length) | 0]; G.pick.tile = null; const r = countryByName(G.pick.country); G.globe.flyTo(r.cap[1], r.cap[2], 2.2); renderPick(); };
-  $('#pk-go').onclick = () => { SETUP.country = G.pick.country; G.pick = null; $('#pickbar').classList.add('hidden'); startGame(); };
+  $('#pk-rand').onclick = () => { const all = [...landsNow().keys()]; G.pick.country = all[(Math.random() * all.length) | 0]; G.pick.tile = null; const r = countryByName(G.pick.country); if (r?.cap) G.globe.flyTo(r.cap[1], r.cap[2], 2.2); renderPick(); };
+  $('#pk-go').onclick = () => { setPick(G.pick.country); G.pick = null; $('#pickbar').classList.add('hidden'); startGame(); };
   paintPick();
 }
 function paintPick() {
-  const g = G.globe, lands = G.lands ||= territories(G.world);
+  const g = G.globe, lands = landsNow();
   for (const R of G.world.regions) g.setRegion(R.i, { alpha: 0, highlight: 0 });
   if (G.pick) for (const [n, tiles] of lands) {
     const c = countryByName(n), on = n === G.pick.country;
-    for (const i of tiles) g.setRegion(i, { color: c.col || '#8a93a6', alpha: on ? 0.6 : 0.22, highlight: on ? 0.6 : i === G.hover ? 0.3 : 0 });
+    for (const i of tiles) g.setRegion(i, { color: c?.col || '#8a93a6', alpha: on ? 0.6 : 0.22, highlight: on ? 0.6 : i === G.hover ? 0.3 : 0 });
   }
   g.commitPalette();
 }
@@ -158,11 +248,13 @@ async function useMap(v) {
 }
 async function startGame() {
   await useMap(G.currentMap);
-  const sim = new Sim(G.world, G.geo, { country: SETUP.country, difficulty: SETUP.diff, seed: SETUP.seed });
+  const ww2 = W39();
+  const sim = new Sim(G.world, G.geo, { country: ww2 ? SETUP.c39 : SETUP.country, scenario: ww2 ? 'ww2' : null, difficulty: SETUP.diff, seed: SETUP.seed });
   SETUP.seed = Math.floor(Math.random() * 2 ** 31);
   attach(sim);
   const N = sim.s.nations[sim.s.player];
-  sim.emit('info', `You take office as leader of ${theOfficial(N)}. The date is 1 January 2025.`, [N.code]);
+  if (ww2) sim.emit('info', `1 September 1939. At dawn, German armies crossed the Polish frontier. You lead ${theOfficial(N)}.`, [N.code], { major: true });
+  else sim.emit('info', `You take office as leader of ${theOfficial(N)}. The date is 1 January 2025.`, [N.code]);
   $('#modal').classList.add('hidden');
   const cap = G.world.regions[N.capital];
   G.globe.flyTo(cap.lat, cap.lon, 1.9);
@@ -187,7 +279,7 @@ function attach(sim) {
   G.sel.clear(); G.dip = null; G.ownerSig = ''; G.disp.clear(); G.trails.clear(); G.scarCount = -1;
   for (const m of [G.markerEls, G.labelEls, G.iconEls]) { for (const el of m.values()) el.remove(); m.clear(); }
   sim.on(onEvent);
-  G.globe.setSunHours(SUN0, sim.s.t);
+  G.globe.setSunHours(sun0(), sim.s.t);
   refreshWorld(true);
   computeStacks();
   renderTicker();
@@ -216,8 +308,8 @@ function frame(now) {
     if (steps >= cap) G.acc = 0;
     if (steps) { refreshWorld(false); if (sim.s.over) G.fn.gameOver(); }
     if (sim.shots.length) processShots(sim.shots.splice(0));
-    G.globe.setSunHours(SUN0, sim.s.t + G.acc);
-  } else if (!sim) G.globe.setSunHours(SUN0, performance.now() / 1000 * 0.8);
+    G.globe.setSunHours(sun0(), sim.s.t + G.acc);
+  } else if (!sim) G.globe.setSunHours(sun0(), performance.now() / 1000 * 0.8);
   G.globe.tick();
   if (sim) {
     if (now - G.lastStacks > 200) { computeStacks(); G.lastStacks = now; }
@@ -628,7 +720,7 @@ function pickTip(i, e) {
   if (i === null || G.world.regions[i].sea) { tt.classList.add('hidden'); $('#ro-region').textContent = i === null ? '--' : G.world.regions[i].name; return; }
   const R = G.world.regions[i], c = countryByName(countryAt(i));
   $('#ro-region').textContent = R.name;
-  tt.innerHTML = `<div class="tt-name">${esc(R.name)}</div>${c ? `<div class="tt-row"><span class="muted">Country</span><span>${esc(c.s)}</span></div><div class="tt-row"><span class="muted">People</span><span>${fmtPop(c.pop)}</span></div><div class="tt-row"><span class="muted">Economy</span><span>${fmtGdp(c.gdp)}</span></div>` : ''}`;
+  tt.innerHTML = `<div class="tt-name">${esc(R.name)}</div>${c ? `<div class="tt-row"><span class="muted">Country</span><span>${esc(c.s)}</span></div><div class="tt-row"><span class="muted">People</span><span>${fmtPop(c.pop)}</span></div><div class="tt-row"><span class="muted">Economy</span><span>${W39() ? fmtGdp39(c.gdp) : fmtGdp(c.gdp)}</span></div>${W39() && c.side ? `<div class="tt-row"><span class="muted">Side</span><span>${esc(c.side)}</span></div>` : ''}` : ''}`;
   placeTip(tt, e);
 }
 function pickUnit(cx, cy) {

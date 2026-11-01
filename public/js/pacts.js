@@ -20,6 +20,8 @@ export const REP = {
   merchant: { name: 'Merchant Power', icon: '⚖️', desc: 'Its traders are everywhere. Partners value it, and merchant leagues court it.' },
   peacemaker: { name: 'Peacemaker', icon: '🕊️', desc: 'Brokers peace, relieves famine and keeps the councils of the world. Respected by all.' },
   scholar: { name: 'Enlightened', icon: '📜', desc: 'Shares its knowledge freely. Learned peoples admire it.' },
+  criminal: { name: 'War Criminal', icon: '☠️', desc: 'Its forces bomb cities, punish civilians and break the laws of war. The world remembers, and the tribunals wait.' },
+  liberator: { name: 'Liberator', icon: '🕊️', desc: 'Frees occupied peoples and brings war criminals to justice.' },
 };
 export function earn(sim, c, tag, v) {
   const N = sim.s.nations[c]; if (!N || !REP[tag]) return;
@@ -49,6 +51,8 @@ export function repOpinion(sim, v, x) {
     o += 8 * k('merchant');
     o += 10 * k('peacemaker');
     o += 10 * k('scholar') * (0.4 + (V.traits?.science || 0.5));
+    o -= 26 * k('criminal') * (1 - (V.brut || 0.1) * 0.7);
+    o += 10 * k('liberator');
   }
   for (const P of s.pacts || []) if (P.members.includes(v) && P.members.includes(x)) o += P.doctrines.faith ? 10 : 6;
   o = Math.round(o * 10) / 10;
@@ -268,6 +272,7 @@ export function pactsDaily(sim) {
 
 // AI peoples found pacts, recruit, and court the player
 function aiPacts(sim) {
+  if (sim.s.ww2) return; // the wartime coalitions grow by events and diplomacy, not by AI leagues
   const s = sim.s, live = Object.values(s.nations).filter(n => n.alive && n.ai);
   if (s.t % (DAY * 5)) return;
   for (const N of live) {
@@ -335,6 +340,7 @@ export function motions(sim, P) {
   if (!out.length) out.push({ kind: 'concord', text: 'Reaffirm the friendship of the members', fx: 'Goodwill between members grows.' });
   // the United Nations condemns, sanctions, mediates and relieves; it does not go to war or police its membership
   if (P.un) return out.filter(m => ['condemn', 'sanction', 'peace', 'relief', 'nukes', 'concord'].includes(m.kind));
+  if (P.faction) return out.filter(m => !['peace', 'nukes', 'expel'].includes(m.kind)); // a wartime coalition does not negotiate with the enemy
   return out;
 }
 

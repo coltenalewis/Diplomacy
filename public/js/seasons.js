@@ -1,6 +1,7 @@
-// Seasons run on the same calendar as the sun: game hour 0 is 1 January 2025, a year is 365 game days.
+// Seasons run on the same calendar as the sun: game hour 0 is the scenario's first day, a year is 365 game days.
 // Everything here is hemisphere-aware and fades out toward the equator, where there is no real winter.
-const DOY0 = 0; // 1 January
+let DOY0 = 0; // 1 January (the 2025 world); the 1939 scenario starts on 1 September
+export function setSeasonStart(doy) { DOY0 = doy; }
 
 export function dayOfYear(t) { return ((DOY0 + t / 24) % 365 + 365) % 365; }
 // -1 at the depth of northern summer, +1 at the depth of northern winter (21 Dec)
